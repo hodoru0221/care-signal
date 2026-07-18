@@ -1,15 +1,31 @@
 {
   "expo": {
     "name": "보호자 안심 알림",
-    "slug": "care-signal-guardian",
+    "slug": "care-signal",
+    "owner": "hodoru0221s-team",
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "plugins": [
       "expo-secure-store",
-      ["expo-notifications", {"color": "#3157d5", "defaultChannel": "guardian-alerts"}]
+      [
+        "expo-notifications",
+        {
+          "color": "#3157d5",
+          "defaultChannel": "guardian-alerts"
+        }
+      ]
     ],
-    "android": {"package": "com.caresignal.guardian"},
-    "ios": {"bundleIdentifier": "com.caresignal.guardian"}
+    "android": {
+      "package": "com.caresignal.guardian"
+    },
+    "ios": {
+      "bundleIdentifier": "com.caresignal.guardian"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "e5cd3ab2-716a-40e5-85a9-2fb2654091b3"
+      }
+    }
   }
 }
