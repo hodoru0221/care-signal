@@ -23,6 +23,15 @@ class PostgresSnapshotRepository:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS push_subscriptions (
+                    token TEXT PRIMARY KEY,
+                    patient_id TEXT NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
 
     def load(self) -> Optional[dict]:
         with psycopg.connect(self.database_url) as connection:
@@ -43,6 +52,26 @@ class PostgresSnapshotRepository:
                 """,
                 (payload,),
             )
+
+    def register_push_token(self, patient_id: str, token: str) -> None:
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute(
+                """
+                INSERT INTO push_subscriptions (token, patient_id, updated_at)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (token) DO UPDATE
+                SET patient_id = EXCLUDED.patient_id, updated_at = NOW()
+                """,
+                (token, patient_id),
+            )
+
+    def push_tokens(self, patient_id: str) -> list[str]:
+        with psycopg.connect(self.database_url) as connection:
+            rows = connection.execute(
+                "SELECT token FROM push_subscriptions WHERE patient_id = %s",
+                (patient_id,),
+            ).fetchall()
+            return [row[0] for row in rows]
 
 
 class PersistentMonitoringStore:
