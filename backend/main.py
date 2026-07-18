@@ -28,6 +28,7 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 GUARDIAN_CONNECTION_CODE = os.getenv("GUARDIAN_CONNECTION_CODE", "CARE-101")
 STAFF_ACCESS_CODE = os.getenv("STAFF_ACCESS_CODE", "NURSE-101")
 DEVICE_API_KEY = os.getenv("DEVICE_API_KEY", "dev-device-key")
+DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
 GUARDIAN_SESSIONS: set[str] = set()
 STAFF_SESSIONS: set[str] = set()
 
@@ -64,6 +65,11 @@ class PushTokenInput(BaseModel):
     token: str
 
 
+class DemoStateInput(BaseModel):
+    state: str
+    confidence: float = Field(default=0.95, ge=0, le=1)
+
+
 def register_push_token(token: str) -> None:
     if not (token.startswith("ExponentPushToken[") or token.startswith("ExpoPushToken[")):
         raise HTTPException(400, "올바른 Expo Push Token이 아닙니다.")
@@ -85,6 +91,15 @@ def notify_guardians(kind: str, event_id: str | None) -> None:
     except Exception:
         # Push delivery failure must not prevent clinical event processing.
         pass
+
+
+def apply_state(room_id: str, state: str, confidence: float) -> dict:
+    before = {event["id"] for event in store.events()}
+    result = store.update_room(room_id, state, confidence)
+    created = next((event for event in store.events() if event["id"] not in before), None)
+    if created:
+        notify_guardians(created["event_type"], created["id"])
+    return result
 
 
 def bearer_token(authorization: str) -> str:
@@ -140,12 +155,7 @@ def receive_inference(payload: InferenceInput, x_device_key: str = Header(defaul
     if not secrets.compare_digest(x_device_key, DEVICE_API_KEY):
         raise HTTPException(401, "장치 인증에 실패했습니다.")
     try:
-        before = {event["id"] for event in store.events()}
-        result = store.update_room(payload.room_id, payload.state, payload.confidence)
-        created = next((event for event in store.events() if event["id"] not in before), None)
-        if created:
-            notify_guardians(created["event_type"], created["id"])
-        return result
+        return apply_state(payload.room_id, payload.state, payload.confidence)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
@@ -208,4 +218,15 @@ def staff_login(payload: StaffLogin):
         raise HTTPException(401, "직원 인증 코드를 확인해 주세요.")
     token = secrets.token_urlsafe(32)
     STAFF_SESSIONS.add(token)
-    return {"access_token": token, "role": "NURSE"}
+    return {"access_token": token, "role": "NURSE", "demo_mode": DEMO_MODE}
+
+
+@app.post("/api/v1/demo/state")
+def demo_state(payload: DemoStateInput, authorization: str = Header(default="")):
+    require_staff(authorization)
+    if not DEMO_MODE:
+        raise HTTPException(404, "시연 모드가 비활성화되어 있습니다.")
+    try:
+        return apply_state("room-01", payload.state, payload.confidence)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
