@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.env
+.venv/
+mobile/node_modules/
+mobile/.expo/
+mobile/.env
+pending_uploads.jsonl
+inference.jsonl
+
