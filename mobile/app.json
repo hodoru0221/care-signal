@@ -5,7 +5,10 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "plugins": ["expo-secure-store"],
+    "plugins": [
+      "expo-secure-store",
+      ["expo-notifications", {"color": "#3157d5", "defaultChannel": "guardian-alerts"}]
+    ],
     "android": {"package": "com.caresignal.guardian"},
     "ios": {"bundleIdentifier": "com.caresignal.guardian"}
   }
