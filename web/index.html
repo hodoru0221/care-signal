@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>병실 안전 모니터</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #172033; background: #f3f6fa; }
+    body { max-width: 1100px; margin: 0 auto; padding: 32px 20px; }
+    header { display:flex; justify-content:space-between; align-items:center; }
+    .grid { display:grid; grid-template-columns: 1fr 1.5fr; gap:18px; }
+    .card { background:white; border-radius:18px; padding:22px; box-shadow:0 8px 28px #17203312; }
+    .state { font-size:36px; font-weight:800; margin:12px 0; }
+    .NORMAL { color:#138a55; } .WARNING { color:#d88100; } .CRITICAL { color:#d73535; }
+    .event { border:1px solid #e5e9f0; border-radius:12px; padding:14px; margin:10px 0; }
+    button { border:0; border-radius:9px; padding:9px 12px; margin:5px 4px 0 0; cursor:pointer; }
+    .primary { background:#265ee8; color:white; }
+    small { color:#667085; }
+    @media(max-width:760px){ .grid{grid-template-columns:1fr;} }
+  </style>
+</head>
+<body>
+  <header><div><h1>병실 안전 모니터</h1><p>WiFi CSI 비영상 모니터링</p></div><b id="clock"></b></header>
+  <section id="staffLogin" class="card" style="max-width:420px;margin:20px auto"><h2>병원 직원 로그인</h2><input id="staffCode" placeholder="직원 인증 코드" value="NURSE-101" style="width:100%;padding:12px;border:1px solid #ccd3df;border-radius:9px"><button class="primary" onclick="staffLogin()" style="width:100%;margin-top:12px">로그인</button><p id="loginError" style="color:#c33"></p></section>
+  <main id="dashboard" class="grid" style="display:none">
+    <section class="card">
+      <small>101호 현재 상태</small>
+      <div id="state" class="state">연결 중</div>
+      <div id="confidence"></div>
+      <p><small id="updated"></small></p>
+    </section>
+    <section class="card"><h2>알림 및 대응</h2><div id="events">불러오는 중…</div></section>
+  </main>
+  <script>
+    const labels={EMPTY:'부재',IN_BED:'침대 위',OUT_OF_BED:'침대 이탈',MOVEMENT_ANOMALY:'이상 움직임'};
+    const staffHeaders=()=>({'Content-Type':'application/json',Authorization:`Bearer ${localStorage.getItem('staffToken')||''}`});
+    async function staffLogin(){const r=await fetch('/api/v1/staff/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({access_code:document.querySelector('#staffCode').value})});if(!r.ok){document.querySelector('#loginError').textContent='인증 코드를 확인해 주세요.';return}const d=await r.json();localStorage.setItem('staffToken',d.access_token);showDashboard();}
+    function showDashboard(){document.querySelector('#staffLogin').style.display='none';document.querySelector('#dashboard').style.display='grid';refresh();}
+    async function patchEvent(id,status){
+      await fetch(`/api/v1/events/${id}`,{method:'PATCH',headers:staffHeaders(),body:JSON.stringify({status,actor:'demo-nurse'})}); refresh();
+    }
+    async function refresh(){
+      const status=await fetch('/api/v1/rooms/room-01/status').then(r=>r.json());
+      const state=document.querySelector('#state'); state.textContent=labels[status.state]||status.state; state.className=`state ${status.risk_level}`;
+      document.querySelector('#confidence').textContent=`신뢰도 ${Math.round(status.confidence*100)}% · 위험도 ${status.risk_level}`;
+      document.querySelector('#updated').textContent=`마지막 갱신 ${new Date(status.updated_at).toLocaleString()}`;
+      const response=await fetch('/api/v1/events',{headers:staffHeaders()});if(response.status===401){localStorage.removeItem('staffToken');location.reload();return}const events=await response.json();
+      document.querySelector('#events').innerHTML=events.length?events.map(e=>`<article class="event"><b class="${e.risk_level}">${labels[e.event_type]||e.event_type}</b> · ${e.status}<br><small>${new Date(e.created_at).toLocaleString()}</small><br>${['OPEN','ACKNOWLEDGED','RESPONDING'].includes(e.status)?`<button class="primary" onclick="patchEvent('${e.id}','ACKNOWLEDGED')">확인</button><button onclick="patchEvent('${e.id}','RESPONDING')">이동 중</button><button onclick="patchEvent('${e.id}','COMPLETED')">처리 완료</button><button onclick="patchEvent('${e.id}','FALSE_ALARM')">오탐</button>`:''}</article>`).join(''):'활성 알림이 없습니다.';
+    }
+    setInterval(()=>document.querySelector('#clock').textContent=new Date().toLocaleTimeString(),1000);
+    setInterval(()=>{if(localStorage.getItem('staffToken'))refresh()},1500);if(localStorage.getItem('staffToken'))showDashboard();
+  </script>
+</body>
+</html>
