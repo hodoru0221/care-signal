@@ -8,10 +8,17 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from backend.domain import MonitoringStore
+from backend.persistence import PersistentMonitoringStore, PostgresSnapshotRepository
 
 
-app = FastAPI(title="WiFi Sensing Ward Monitor", version="0.1.0")
-store = MonitoringStore()
+app = FastAPI(title="WiFi Sensing Ward Monitor", version="0.2.0")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+if DATABASE_URL:
+    store = PersistentMonitoringStore(PostgresSnapshotRepository(DATABASE_URL))
+    STORAGE_MODE = "postgres"
+else:
+    store = MonitoringStore()
+    STORAGE_MODE = "memory"
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 GUARDIAN_CONNECTION_CODE = os.getenv("GUARDIAN_CONNECTION_CODE", "CARE-101")
 STAFF_ACCESS_CODE = os.getenv("STAFF_ACCESS_CODE", "NURSE-101")
@@ -70,7 +77,7 @@ def dashboard():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "care-signal-api"}
+    return {"status": "ok", "service": "care-signal-api", "storage": STORAGE_MODE}
 
 
 @app.get("/guardian")
