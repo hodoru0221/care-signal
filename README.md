@@ -46,6 +46,8 @@ npx expo start
 EXPO_PUBLIC_API_URL=https://api.example.com
 ```
 
+현재 배포 앱의 공개 API는 `https://care-signal.onrender.com`으로 설정되어 있다. 이 파일에는 공개 주소만 저장하며 장치 키나 로그인 비밀값을 넣지 않는다.
+
 ### 이 PC에서 한 번에 테스트
 
 프로젝트 루트의 `START_MOBILE_DEMO.ps1`을 PowerShell로 실행하면 서버, 가상 센서와 Expo 앱이 각각 새 창에서 실행된다. 세 창을 모두 종료하면 테스트가 끝난다.
