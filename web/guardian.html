@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#3157d5">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <title>환자 안심 알림</title>
+  <style>
+    :root{font-family:system-ui,sans-serif;color:#19233a;background:#eef2f8}*{box-sizing:border-box}
+    body{margin:0;min-height:100vh}.shell{max-width:520px;margin:auto;padding:24px 18px 90px}
+    header{padding:16px 2px 24px}.brand{font-weight:800;color:#3157d5}.card{background:white;border-radius:22px;padding:22px;margin-bottom:15px;box-shadow:0 10px 35px #22315b12}
+    h1{font-size:25px;margin:7px 0}.badge{display:inline-block;border-radius:999px;padding:7px 11px;font-weight:700;background:#e7f6ef;color:#117a4e}
+    .WARD_NOTIFIED{background:#fff2db;color:#a65c00}.STAFF_CHECKING{background:#e8eeff;color:#3157d5}.CHECK_COMPLETED{background:#e7f6ef;color:#117a4e}.AWAY{background:#edf0f5;color:#536176}
+    .message{font-size:19px;line-height:1.55;margin:22px 0}.row{display:flex;justify-content:space-between;padding:13px 0;border-top:1px solid #edf0f5}.muted{color:#68758c;font-size:14px}
+    input,button{width:100%;border-radius:13px;padding:14px;font-size:16px}input{border:1px solid #ccd3df;margin:14px 0}button{border:0;background:#3157d5;color:white;font-weight:750}.secondary{background:#eef2ff;color:#3157d5;margin-top:9px}
+    .hidden{display:none}.error{color:#c83e3e;min-height:22px}.pulse{width:10px;height:10px;border-radius:50%;background:#20a56b;display:inline-block;margin-right:6px}
+  </style>
+</head>
+<body><main class="shell">
+  <header><div class="brand">CARE SIGNAL</div><h1>보호자 안심 알림</h1></header>
+  <section id="login" class="card">
+    <h2>환자 연결</h2><p class="muted">병동에서 받은 연결 코드를 입력해 주세요.</p>
+    <input id="code" placeholder="연결 코드" autocomplete="one-time-code">
+    <div id="error" class="error"></div><button onclick="login()">연결하기</button>
+    <p class="muted">시연 코드: CARE-101</p>
+  </section>
+  <section id="patient" class="hidden">
+    <article class="card"><div class="muted" id="room"></div><h1 id="name"></h1><span id="badge" class="badge"></span><p id="message" class="message"></p><div class="row"><span>병실 센서</span><b id="sensor"></b></div><div class="row"><span>마지막 갱신</span><span id="updated"></span></div></article>
+    <article class="card"><h2>병동 대응 현황</h2><p id="progress" class="muted">특이사항이 없습니다.</p><button class="secondary" onclick="location.href='tel:0000000000'">병동에 연락하기</button></article>
+    <button onclick="logout()">연결 해제</button>
+  </section>
+  <script>
+    const labels={STABLE:'안정',AWAY:'자리 비움',WARD_NOTIFIED:'병동 확인 요청',STAFF_CHECKING:'담당자 확인 중',CHECK_COMPLETED:'확인 완료'};
+    const progressLabels={OPEN:'병동에 확인 요청이 전달되었습니다.',ACKNOWLEDGED:'담당자가 알림을 확인했습니다.',RESPONDING:'담당자가 환자 상태를 확인하고 있습니다.',COMPLETED:'상태 확인이 완료되었습니다.',FALSE_ALARM:'확인 결과 특이사항이 없었습니다.'};
+    async function login(){const code=document.querySelector('#code').value;const r=await fetch('/api/v1/guardian/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({connection_code:code})});if(!r.ok){document.querySelector('#error').textContent='연결 코드를 확인해 주세요.';return}const d=await r.json();localStorage.setItem('guardianToken',d.access_token);show();}
+    function logout(){localStorage.removeItem('guardianToken');location.reload()}
+    async function refresh(){const token=localStorage.getItem('guardianToken');if(!token)return;const r=await fetch('/api/v1/guardian/patient',{headers:{Authorization:`Bearer ${token}`}});if(r.status===401)return logout();const d=await r.json();document.querySelector('#room').textContent=d.patient.room_label;document.querySelector('#name').textContent=d.patient.display_name+' 님';const b=document.querySelector('#badge');b.textContent=labels[d.display_state];b.className=`badge ${d.display_state}`;document.querySelector('#message').textContent=d.message;document.querySelector('#sensor').innerHTML=d.sensor_online?'<span class="pulse"></span>정상':'연결 확인 필요';document.querySelector('#updated').textContent=new Date(d.updated_at).toLocaleTimeString();document.querySelector('#progress').textContent=d.event?progressLabels[d.event.progress]:'최근 특이사항이 없습니다.';}
+    function show(){document.querySelector('#login').classList.add('hidden');document.querySelector('#patient').classList.remove('hidden');refresh()}
+    if(localStorage.getItem('guardianToken'))show();setInterval(refresh,3000);if('serviceWorker' in navigator)navigator.serviceWorker.register('/service-worker.js');
+  </script>
+</main></body></html>
