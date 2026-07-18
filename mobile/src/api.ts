@@ -43,3 +43,12 @@ export const getPatient = (baseUrl: string, token: string) =>
 
 export const getHistory = (baseUrl: string, token: string) =>
   authorizedGet<GuardianEvent[]>(baseUrl, token, "/api/v1/guardian/events");
+
+export async function savePushToken(baseUrl: string, accessToken: string, pushToken: string) {
+  const response = await fetch(`${normalizeBaseUrl(baseUrl)}/api/v1/guardian/push-token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ token: pushToken }),
+  });
+  if (!response.ok) throw new Error("푸시 알림 등록에 실패했습니다.");
+}
