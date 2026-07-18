@@ -1,0 +1,9 @@
+{
+  "name": "보호자 안심 알림",
+  "short_name": "안심 알림",
+  "start_url": "/guardian",
+  "display": "standalone",
+  "background_color": "#eef2f8",
+  "theme_color": "#3157d5",
+  "lang": "ko"
+}
