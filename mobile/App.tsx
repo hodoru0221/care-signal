@@ -2,7 +2,8 @@ import { StatusBar } from "expo-status-bar";
 import * as SecureStore from "expo-secure-store";
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, AppState, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { getHistory, getPatient, GuardianEvent, GuardianStatus, login } from "./src/api";
+import { getHistory, getPatient, GuardianEvent, GuardianStatus, login, savePushToken } from "./src/api";
+import { getGuardianPushToken } from "./src/notifications";
 
 const TOKEN_KEY = "guardian_token";
 const SERVER_KEY = "server_url";
@@ -22,6 +23,7 @@ export default function App() {
 
   useEffect(() => { (async () => { const [savedToken, savedUrl] = await Promise.all([SecureStore.getItemAsync(TOKEN_KEY), SecureStore.getItemAsync(SERVER_KEY)]); if (!PUBLIC_API_URL && savedUrl) setBaseUrl(savedUrl); setToken(savedToken); setLoading(false); })(); }, []);
   useEffect(() => { if (!token) return; const refresh = async () => { try { const [patient, events] = await Promise.all([getPatient(baseUrl, token), getHistory(baseUrl, token)]); setStatus(patient); setHistory(events); setError(""); } catch (e) { if ((e as Error).message === "SESSION_EXPIRED") await signOut(); else setError((e as Error).message); } }; refresh(); const timer = setInterval(refresh, 5000); const listener = AppState.addEventListener("change", state => state === "active" && refresh()); return () => { clearInterval(timer); listener.remove(); }; }, [token, baseUrl]);
+  useEffect(() => { if (!token) return; getGuardianPushToken().then(pushToken => { if (pushToken) return savePushToken(baseUrl, token, pushToken); }).catch(() => undefined); }, [token, baseUrl]);
 
   async function connect() { setLoading(true); setError(""); try { const result = await login(baseUrl, code); await Promise.all([SecureStore.setItemAsync(TOKEN_KEY, result.access_token), SecureStore.setItemAsync(SERVER_KEY, baseUrl)]); setToken(result.access_token); } catch (e) { setError((e as Error).message); } finally { setLoading(false); } }
   async function signOut() { await SecureStore.deleteItemAsync(TOKEN_KEY); setToken(null); setStatus(null); setHistory([]); }
