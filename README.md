@@ -48,6 +48,10 @@ EXPO_PUBLIC_API_URL=https://api.example.com
 
 현재 배포 앱의 공개 API는 `https://care-signal.onrender.com`으로 설정되어 있다. 이 파일에는 공개 주소만 저장하며 장치 키나 로그인 비밀값을 넣지 않는다.
 
+### 팀 시연 제어판
+
+Render의 `DEMO_MODE=true`일 때 병원 직원 웹에 환자 부재, 침대 위, 침대 이탈, 이상 움직임 버튼이 표시된다. 직원 인증을 통과해야 사용할 수 있으며 장치 인증키는 브라우저에 노출되지 않는다. 실제 운영 전에는 `DEMO_MODE=false`로 변경한다.
+
 ### 이 PC에서 한 번에 테스트
 
 프로젝트 루트의 `START_MOBILE_DEMO.ps1`을 PowerShell로 실행하면 서버, 가상 센서와 Expo 앱이 각각 새 창에서 실행된다. 세 창을 모두 종료하면 테스트가 끝난다.
