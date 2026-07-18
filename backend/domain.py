@@ -48,6 +48,22 @@ class MonitoringStore:
         self._rooms: Dict[str, RoomStatus] = {"room-01": RoomStatus()}
         self._events: Dict[str, Event] = {}
 
+    def export_snapshot(self) -> dict:
+        with self._lock:
+            return {
+                "rooms": {key: asdict(value) for key, value in self._rooms.items()},
+                "events": {key: asdict(value) for key, value in self._events.items()},
+            }
+
+    def import_snapshot(self, snapshot: dict) -> None:
+        with self._lock:
+            rooms = snapshot.get("rooms", {})
+            events = snapshot.get("events", {})
+            self._rooms = {key: RoomStatus(**value) for key, value in rooms.items()}
+            self._events = {key: Event(**value) for key, value in events.items()}
+            if "room-01" not in self._rooms:
+                self._rooms["room-01"] = RoomStatus()
+
     @staticmethod
     def _risk_for(state: str) -> str:
         return {
