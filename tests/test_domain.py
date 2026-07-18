@@ -1,6 +1,7 @@
 import unittest
 
 from backend.domain import MonitoringStore
+from backend.notifications import build_push_messages
 
 
 class MonitoringStoreTests(unittest.TestCase):
@@ -32,6 +33,12 @@ class MonitoringStoreTests(unittest.TestCase):
         restored.import_snapshot(snapshot)
         self.assertEqual(restored.room("room-01")["state"], "OUT_OF_BED")
         self.assertEqual(len(restored.events()), 1)
+
+    def test_push_message_hides_model_confidence(self):
+        messages = build_push_messages(["ExponentPushToken[test]"], "OUT_OF_BED", "evt-1")
+        self.assertEqual(len(messages), 1)
+        self.assertNotIn("confidence", messages[0])
+        self.assertEqual(messages[0]["data"]["event_id"], "evt-1")
 
     def test_guardian_sees_response_progress_without_clinical_details(self):
         store = MonitoringStore()
