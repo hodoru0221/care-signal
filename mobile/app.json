@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "보호자 안심 알림",
+    "slug": "care-signal-guardian",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "plugins": ["expo-secure-store"],
+    "android": {"package": "com.caresignal.guardian"},
+    "ios": {"bundleIdentifier": "com.caresignal.guardian"}
+  }
+}
