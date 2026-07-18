@@ -28,14 +28,23 @@
       <div id="state" class="state">연결 중</div>
       <div id="confidence"></div>
       <p><small id="updated"></small></p>
+      <div id="demoPanel" style="display:none;border-top:1px solid #e5e9f0;margin-top:18px;padding-top:16px">
+        <b>시연 제어판</b><p><small>실제 CSI 대신 가상 환자 상태를 생성합니다.</small></p>
+        <button onclick="setDemoState('EMPTY')">환자 부재</button>
+        <button onclick="setDemoState('IN_BED')">침대 위</button>
+        <button onclick="setDemoState('OUT_OF_BED')">침대 이탈</button>
+        <button class="primary" onclick="setDemoState('MOVEMENT_ANOMALY')">이상 움직임</button>
+        <p id="demoResult"><small></small></p>
+      </div>
     </section>
     <section class="card"><h2>알림 및 대응</h2><div id="events">불러오는 중…</div></section>
   </main>
   <script>
     const labels={EMPTY:'부재',IN_BED:'침대 위',OUT_OF_BED:'침대 이탈',MOVEMENT_ANOMALY:'이상 움직임'};
     const staffHeaders=()=>({'Content-Type':'application/json',Authorization:`Bearer ${localStorage.getItem('staffToken')||''}`});
-    async function staffLogin(){const r=await fetch('/api/v1/staff/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({access_code:document.querySelector('#staffCode').value})});if(!r.ok){document.querySelector('#loginError').textContent='인증 코드를 확인해 주세요.';return}const d=await r.json();localStorage.setItem('staffToken',d.access_token);showDashboard();}
+    async function staffLogin(){const r=await fetch('/api/v1/staff/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({access_code:document.querySelector('#staffCode').value})});if(!r.ok){document.querySelector('#loginError').textContent='인증 코드를 확인해 주세요.';return}const d=await r.json();localStorage.setItem('staffToken',d.access_token);localStorage.setItem('demoMode',String(d.demo_mode));showDashboard();updateDemoPanel();}
     function showDashboard(){document.querySelector('#staffLogin').style.display='none';document.querySelector('#dashboard').style.display='grid';refresh();}
+    async function setDemoState(state){const r=await fetch('/api/v1/demo/state',{method:'POST',headers:staffHeaders(),body:JSON.stringify({state,confidence:0.95})});const target=document.querySelector('#demoResult small');if(r.ok){target.textContent=`${labels[state]} 상태를 생성했습니다.`;refresh()}else{target.textContent='상태 생성에 실패했습니다.'}}
     async function patchEvent(id,status){
       await fetch(`/api/v1/events/${id}`,{method:'PATCH',headers:staffHeaders(),body:JSON.stringify({status,actor:'demo-nurse'})}); refresh();
     }
@@ -48,7 +57,8 @@
       document.querySelector('#events').innerHTML=events.length?events.map(e=>`<article class="event"><b class="${e.risk_level}">${labels[e.event_type]||e.event_type}</b> · ${e.status}<br><small>${new Date(e.created_at).toLocaleString()}</small><br>${['OPEN','ACKNOWLEDGED','RESPONDING'].includes(e.status)?`<button class="primary" onclick="patchEvent('${e.id}','ACKNOWLEDGED')">확인</button><button onclick="patchEvent('${e.id}','RESPONDING')">이동 중</button><button onclick="patchEvent('${e.id}','COMPLETED')">처리 완료</button><button onclick="patchEvent('${e.id}','FALSE_ALARM')">오탐</button>`:''}</article>`).join(''):'활성 알림이 없습니다.';
     }
     setInterval(()=>document.querySelector('#clock').textContent=new Date().toLocaleTimeString(),1000);
-    setInterval(()=>{if(localStorage.getItem('staffToken'))refresh()},1500);if(localStorage.getItem('staffToken'))showDashboard();
+    function updateDemoPanel(){document.querySelector('#demoPanel').style.display=localStorage.getItem('demoMode')==='true'?'block':'none'}
+    setInterval(()=>{if(localStorage.getItem('staffToken'))refresh()},1500);if(localStorage.getItem('staffToken'))showDashboard();updateDemoPanel();
   </script>
 </body>
 </html>
