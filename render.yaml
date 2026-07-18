@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: care-signal
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: GUARDIAN_CONNECTION_CODE
+        sync: false
+      - key: STAFF_ACCESS_CODE
+        sync: false
+      - key: DEVICE_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: "*"
