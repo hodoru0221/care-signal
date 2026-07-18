@@ -24,6 +24,15 @@ class MonitoringStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             store.update_room("room-01", "IN_BED", 1.2)
 
+    def test_snapshot_restores_room_and_events(self):
+        source = MonitoringStore()
+        source.update_room("room-01", "OUT_OF_BED", 0.9)
+        snapshot = source.export_snapshot()
+        restored = MonitoringStore()
+        restored.import_snapshot(snapshot)
+        self.assertEqual(restored.room("room-01")["state"], "OUT_OF_BED")
+        self.assertEqual(len(restored.events()), 1)
+
     def test_guardian_sees_response_progress_without_clinical_details(self):
         store = MonitoringStore()
         store.update_room("room-01", "MOVEMENT_ANOMALY", 0.88)
