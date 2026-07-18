@@ -9,15 +9,20 @@ from pydantic import BaseModel, Field
 
 from backend.domain import MonitoringStore
 from backend.persistence import PersistentMonitoringStore, PostgresSnapshotRepository
+from backend.notifications import send_push_notifications
 
 
 app = FastAPI(title="WiFi Sensing Ward Monitor", version="0.2.0")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 if DATABASE_URL:
-    store = PersistentMonitoringStore(PostgresSnapshotRepository(DATABASE_URL))
+    postgres_repository = PostgresSnapshotRepository(DATABASE_URL)
+    store = PersistentMonitoringStore(postgres_repository)
+    push_tokens_memory = None
     STORAGE_MODE = "postgres"
 else:
     store = MonitoringStore()
+    postgres_repository = None
+    push_tokens_memory: set[str] | None = set()
     STORAGE_MODE = "memory"
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 GUARDIAN_CONNECTION_CODE = os.getenv("GUARDIAN_CONNECTION_CODE", "CARE-101")
@@ -53,6 +58,33 @@ class GuardianLogin(BaseModel):
 
 class StaffLogin(BaseModel):
     access_code: str
+
+
+class PushTokenInput(BaseModel):
+    token: str
+
+
+def register_push_token(token: str) -> None:
+    if not (token.startswith("ExponentPushToken[") or token.startswith("ExpoPushToken[")):
+        raise HTTPException(400, "올바른 Expo Push Token이 아닙니다.")
+    if postgres_repository:
+        postgres_repository.register_push_token("patient-01", token)
+    else:
+        push_tokens_memory.add(token)
+
+
+def patient_push_tokens() -> list[str]:
+    if postgres_repository:
+        return postgres_repository.push_tokens("patient-01")
+    return list(push_tokens_memory)
+
+
+def notify_guardians(kind: str, event_id: str | None) -> None:
+    try:
+        send_push_notifications(patient_push_tokens(), kind, event_id)
+    except Exception:
+        # Push delivery failure must not prevent clinical event processing.
+        pass
 
 
 def bearer_token(authorization: str) -> str:
@@ -108,7 +140,12 @@ def receive_inference(payload: InferenceInput, x_device_key: str = Header(defaul
     if not secrets.compare_digest(x_device_key, DEVICE_API_KEY):
         raise HTTPException(401, "장치 인증에 실패했습니다.")
     try:
-        return store.update_room(payload.room_id, payload.state, payload.confidence)
+        before = {event["id"] for event in store.events()}
+        result = store.update_room(payload.room_id, payload.state, payload.confidence)
+        created = next((event for event in store.events() if event["id"] not in before), None)
+        if created:
+            notify_guardians(created["event_type"], created["id"])
+        return result
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
@@ -123,7 +160,9 @@ def events(authorization: str = Header(default="")):
 def update_event(event_id: str, payload: EventUpdate, authorization: str = Header(default="")):
     require_staff(authorization)
     try:
-        return store.update_event(event_id, payload.status, payload.actor)
+        result = store.update_event(event_id, payload.status, payload.actor)
+        notify_guardians(payload.status, event_id)
+        return result
     except KeyError:
         raise HTTPException(404, "Event not found")
     except ValueError as exc:
@@ -154,6 +193,13 @@ def guardian_patient(authorization: str = Header(default="")):
 def guardian_events(authorization: str = Header(default="")):
     require_guardian(authorization)
     return store.guardian_events("room-01")
+
+
+@app.post("/api/v1/guardian/push-token")
+def guardian_push_token(payload: PushTokenInput, authorization: str = Header(default="")):
+    require_guardian(authorization)
+    register_push_token(payload.token)
+    return {"registered": True}
 
 
 @app.post("/api/v1/staff/login")
