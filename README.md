@@ -63,6 +63,10 @@ ALLOWED_ORIGINS=https://hospital.example.com,https://guardian.example.com
 
 서버는 `Dockerfile`로 컨테이너 배포할 수 있으며 배포 후 `/health`가 `status: ok`를 반환해야 한다.
 
+### Render 배포
+
+저장소 루트의 `render.yaml`을 Blueprint로 연결하면 Singapore 리전의 Docker 웹 서비스가 생성된다. 최초 생성 화면에서 `GUARDIAN_CONNECTION_CODE`, `STAFF_ACCESS_CODE`, `DEVICE_API_KEY` 세 값을 입력한다. Render가 제공하는 `onrender.com` 주소는 HTTPS가 적용된 공개 접속 주소다.
+
 현재 로그인 세션과 사건 기록은 메모리에 저장되는 프로토타입이다. 서버가 재시작되어도 유지되는 운영 버전을 만들려면 다음 단계에서 PostgreSQL과 사용자 계정 테이블을 연결해야 한다.
 
 ## 병원 수집 PC 게이트웨이
@@ -99,4 +103,3 @@ UNO R4 알림기는 다음 주소를 1초 간격으로 조회한다.
 ```text
 GET /api/v1/devices/uno-room-01/alert?room_id=room-01&location=room
 ```
-
