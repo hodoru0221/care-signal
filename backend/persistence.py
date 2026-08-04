@@ -73,6 +73,34 @@ class PostgresSnapshotRepository:
             ).fetchall()
             return [row[0] for row in rows]
 
+    def all_push_subscriptions(self) -> list[tuple[str, str]]:
+        """Return patient/token pairs for a one-time database migration."""
+        with psycopg.connect(self.database_url) as connection:
+            rows = connection.execute(
+                "SELECT patient_id, token FROM push_subscriptions"
+            ).fetchall()
+            return [(row[0], row[1]) for row in rows]
+
+
+def migrate_repository_if_empty(
+    target: PostgresSnapshotRepository,
+    source: PostgresSnapshotRepository,
+) -> bool:
+    """Copy legacy data once, without overwriting an initialized target."""
+    target.initialize()
+    if target.load() is not None:
+        return False
+
+    source.initialize()
+    snapshot = source.load()
+    if snapshot is None:
+        return False
+
+    target.save(snapshot)
+    for patient_id, token in source.all_push_subscriptions():
+        target.register_push_token(patient_id, token)
+    return True
+
 
 class PersistentMonitoringStore:
     def __init__(self, repository: PostgresSnapshotRepository) -> None:
@@ -109,3 +137,4 @@ class PersistentMonitoringStore:
 
     def guardian_events(self, room_id: str) -> list[dict]:
         return self.memory.guardian_events(room_id)
+

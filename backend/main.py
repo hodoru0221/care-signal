@@ -8,17 +8,26 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from backend.domain import MonitoringStore
-from backend.persistence import PersistentMonitoringStore, PostgresSnapshotRepository
+from backend.persistence import (
+    PersistentMonitoringStore,
+    PostgresSnapshotRepository,
+    migrate_repository_if_empty,
+)
 from backend.notifications import send_push_notifications
 
 
 app = FastAPI(title="WiFi Sensing Ward Monitor", version="0.2.0")
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+NEON_DATABASE_URL = os.getenv("NEON_DATABASE_URL", "")
+LEGACY_DATABASE_URL = os.getenv("DATABASE_URL", "")
+DATABASE_URL = NEON_DATABASE_URL or LEGACY_DATABASE_URL
 if DATABASE_URL:
     postgres_repository = PostgresSnapshotRepository(DATABASE_URL)
+    if NEON_DATABASE_URL and LEGACY_DATABASE_URL and NEON_DATABASE_URL != LEGACY_DATABASE_URL:
+        legacy_repository = PostgresSnapshotRepository(LEGACY_DATABASE_URL)
+        migrate_repository_if_empty(postgres_repository, legacy_repository)
     store = PersistentMonitoringStore(postgres_repository)
     push_tokens_memory = None
-    STORAGE_MODE = "postgres"
+    STORAGE_MODE = "neon-postgres" if NEON_DATABASE_URL else "render-postgres"
 else:
     store = MonitoringStore()
     postgres_repository = None
@@ -230,3 +239,4 @@ def demo_state(payload: DemoStateInput, authorization: str = Header(default=""))
         return apply_state("room-01", payload.state, payload.confidence)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+
