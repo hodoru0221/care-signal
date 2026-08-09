@@ -49,6 +49,35 @@ class MonitoringStoreTests(unittest.TestCase):
         restored.import_snapshot({"rooms": {}, "events": {}})
         self.assertEqual(len(restored.rooms()), len(WARD_LAYOUT["rooms"]))
 
+    def test_old_snapshot_without_history_keeps_data_and_adds_new_rooms(self):
+        source = MonitoringStore()
+        source.update_room("room-01", "OUT_OF_BED", 0.9)
+        old_snapshot = source.export_snapshot()
+        old_snapshot.pop("history")
+        old_snapshot["rooms"] = {"room-01": old_snapshot["rooms"]["room-01"]}
+
+        restored = MonitoringStore()
+        restored.import_snapshot(old_snapshot)
+
+        self.assertEqual(restored.room("room-01")["state"], "OUT_OF_BED")
+        self.assertEqual(len(restored.rooms()), len(WARD_LAYOUT["rooms"]))
+        self.assertEqual(len(restored.events()), 1)
+        self.assertEqual(restored.room_history("room-01"), [])
+
+    def test_room_histories_are_isolated_and_newest_first(self):
+        store = MonitoringStore()
+        store.update_room("room-01", "IN_BED", 0.91)
+        store.update_room("room-02", "OUT_OF_BED", 0.82)
+        store.update_room("room-01", "EMPTY", 0.99)
+        self.assertEqual(
+            [item["state"] for item in store.room_history("room-01")],
+            ["EMPTY", "IN_BED"],
+        )
+        self.assertEqual(
+            [item["state"] for item in store.room_history("room-02")],
+            ["OUT_OF_BED"],
+        )
+
     def test_ward_map_combines_layout_and_live_status(self):
         store = MonitoringStore()
         store.update_room("room-03", "MOVEMENT_ANOMALY", 0.91)

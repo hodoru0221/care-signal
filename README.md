@@ -40,6 +40,31 @@ uvicorn backend.main:app --reload
 
 병동 배치는 `backend/ward.py`에서 관리하고 감지 기록은 모니터링 스냅샷에 저장한다. 기존 스냅샷을 불러올 때 새 병실과 이력 구조가 자동으로 보완되므로 이전 데이터와 호환된다. 병실별 최근 기록은 스냅샷 크기가 계속 커지지 않도록 최대 500건을 유지한다.
 
+병동 맵 응답은 정적 배치와 실시간 상태를 분리해 결합한다. 최상위에는 `id`, `name`, `rooms`, `stations`가 있고, 각 `rooms[]` 항목에는 `room_id`, 표시용 `label`·`bed_label`, 그리드 좌표 `x`·`y`·`width`·`height`, 그리고 `status`가 있다. `status`는 `room_id`, `state`, `confidence`, `risk_level`, `updated_at`을 담는다. 따라서 배치 변경은 과거 감지·사건 데이터 형식을 바꾸지 않는다.
+
+## 최종 시연 흐름
+
+1. 서버를 `DEMO_MODE=true`로 실행하고 직원 화면 `/`에서 `NURSE-101`로 로그인한다.
+2. 병동 맵에서 병실을 선택한 뒤 `침대 위`를 눌러 정상 상태와 해당 병실 이력을 확인한다.
+3. `침대 이탈` 또는 `이상 움직임`을 눌러 주황·빨강 상태, 사건 생성, UNO 경보 조회 결과를 확인한다.
+4. 사건 카드에서 `확인` 또는 `이동 중`을 누르면 병실 경보음이 중지되고, 보호자 화면 `/guardian`에서 대응 진행 상태가 표시되는지 확인한다.
+5. `처리 완료` 또는 `오탐`으로 사건을 종료한 뒤, 다른 병실을 선택해 병실별 상태와 이력이 서로 섞이지 않는지 확인한다.
+
+시연 버튼은 `DEMO_MODE=true`에서만 보인다. 로그인 세션은 서버 메모리에만 있고, 상태·사건·병실 이력은 데이터베이스가 설정된 배포에서는 하나의 JSONB 스냅샷으로 저장된다.
+
+## 자동화 테스트
+
+테스트는 표준 `unittest`와 FastAPI HTTP 테스트 클라이언트를 사용한다. 운영 의존성과 분리된 테스트 의존성은 `requirements-test.txt`에만 추가되어 있다.
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements-test.txt
+python -m unittest discover -s tests -v
+```
+
+인증 경계, 병동 맵 응답, 다중 병실 상태·사건 분리, 병실 이력 순서와 제한, 구형 스냅샷 보완, 잘못된 상태·신뢰도·병실·인증 입력을 검증한다. 알려진 결함을 재현하는 테스트는 `expected failure`로 별도 표시된다.
+
 ## 보호자 네이티브 앱
 
 `mobile` 폴더에는 Android와 iOS 공용 Expo 앱이 있다. Node.js 설치 후 다음과 같이 실행한다.
