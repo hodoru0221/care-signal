@@ -263,6 +263,18 @@ class MonitoringStore:
                 reverse=True,
             )
             event = recent[0] if recent else None
+            now = datetime.now(timezone.utc)
+            sensor_online = any(
+                observation.room_id == room_id
+                and (
+                    now
+                    - datetime.fromisoformat(
+                        observation.received_at.replace("Z", "+00:00")
+                    )
+                ).total_seconds()
+                <= DEVICE_ONLINE_SECONDS
+                for observation in self._observations.values()
+            )
 
             if event and event.status in {"ACKNOWLEDGED", "RESPONDING"}:
                 display_state = "STAFF_CHECKING"
@@ -284,7 +296,7 @@ class MonitoringStore:
                 "patient": {"display_name": "김○○", "room_label": "101호"},
                 "display_state": display_state,
                 "message": message,
-                "sensor_online": True,
+                "sensor_online": sensor_online,
                 "updated_at": room.updated_at,
                 "event": None
                 if event is None

@@ -102,6 +102,15 @@ EXPO_PUBLIC_API_URL=https://api.example.com
 
 현재 배포 앱의 공개 API는 `https://care-signal.onrender.com`으로 설정되어 있다. 이 파일에는 공개 주소만 저장하며 장치 키나 로그인 비밀값을 넣지 않는다.
 
+설치형 Android 앱은 `mobile/eas.json`의 `preview` 프로필로 APK를 만든다. 이 APK는 Expo Go나 개발 PC 없이 실행되며 WiFi 또는 모바일 데이터로 공개 API에 연결한다.
+
+```powershell
+cd mobile
+eas build --platform android --profile preview
+```
+
+앱이 화면에 열려 있을 때는 15초마다 상태와 이력을 갱신한다. 연결 실패 시 최대 60초 간격의 지수 백오프로 자동 재시도하고, 앱이 다시 활성화되거나 푸시 알림을 열면 즉시 최신 상태를 조회한다. 서버가 응답하지 않을 때는 마지막 성공 동기화 시각과 기존 화면을 유지한다. 배포 DB에서는 보호자 세션을 30일간 보존하므로 Render 재시작만으로 로그아웃되지 않는다.
+
 ### 팀 시연 제어판
 
 Render의 `DEMO_MODE=true`일 때 병원 직원 웹에 환자 부재, 침대 위, 침대 이탈, 이상 움직임 버튼이 표시된다. 직원 인증을 통과해야 사용할 수 있으며 장치 인증키는 브라우저에 노출되지 않는다. 실제 운영 전에는 `DEMO_MODE=false`로 변경한다.
@@ -122,6 +131,7 @@ ALLOWED_ORIGINS=https://hospital.example.com,https://guardian.example.com
 ```
 
 서버는 `Dockerfile`로 컨테이너 배포할 수 있으며 배포 후 `/health`가 `status: ok`를 반환해야 한다.
+`/health`의 `storage`가 `neon-postgres`인지, `revision`이 배포하려는 Git 커밋과 일치하는지도 함께 확인한다.
 
 ### Render 배포
 

@@ -57,6 +57,20 @@ class PostgresSnapshotRepository:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS guardian_sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    patient_id TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    expires_at TIMESTAMPTZ NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS guardian_sessions_expiry_idx "
+                "ON guardian_sessions (expires_at)"
+            )
 
     def load(self) -> Optional[dict]:
         with psycopg.connect(self.database_url) as connection:
@@ -195,6 +209,44 @@ class PostgresSnapshotRepository:
             ).fetchall()
             return [row[0] for row in rows]
 
+    def register_guardian_session(
+        self, token_hash: str, patient_id: str, expires_at: datetime
+    ) -> None:
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute(
+                "DELETE FROM guardian_sessions WHERE expires_at <= NOW()"
+            )
+            connection.execute(
+                """
+                INSERT INTO guardian_sessions
+                    (token_hash, patient_id, created_at, expires_at)
+                VALUES (%s, %s, NOW(), %s)
+                ON CONFLICT (token_hash) DO UPDATE
+                SET patient_id = EXCLUDED.patient_id,
+                    created_at = NOW(),
+                    expires_at = EXCLUDED.expires_at
+                """,
+                (token_hash, patient_id, expires_at),
+            )
+
+    def guardian_session_exists(self, token_hash: str) -> bool:
+        with psycopg.connect(self.database_url) as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM guardian_sessions
+                WHERE token_hash = %s AND expires_at > NOW()
+                """,
+                (token_hash,),
+            ).fetchone()
+            return row is not None
+
+    def revoke_guardian_session(self, token_hash: str) -> None:
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute(
+                "DELETE FROM guardian_sessions WHERE token_hash = %s",
+                (token_hash,),
+            )
+
     def all_push_subscriptions(self) -> list[tuple[str, str]]:
         """Return patient/token pairs for a one-time database migration."""
         with psycopg.connect(self.database_url) as connection:
@@ -299,7 +351,12 @@ class PersistentMonitoringStore:
         return self._read("device_alert", room_id, location)
 
     def guardian_view(self, room_id: str) -> dict:
-        return self._read("guardian_view", room_id)
+        view = self._read("guardian_view", room_id)
+        view["sensor_online"] = any(
+            device["room_id"] == room_id and device["online"]
+            for device in self.repository.device_statuses()
+        )
+        return view
 
     def guardian_events(self, room_id: str) -> list[dict]:
         return self._read("guardian_events", room_id)

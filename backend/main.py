@@ -1,6 +1,7 @@
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from math import isfinite
 from pathlib import Path
 from typing import Literal
@@ -43,8 +44,13 @@ GUARDIAN_CONNECTION_CODE = os.getenv("GUARDIAN_CONNECTION_CODE", "CARE-101")
 STAFF_ACCESS_CODE = os.getenv("STAFF_ACCESS_CODE", "NURSE-101")
 DEVICE_API_KEY = os.getenv("DEVICE_API_KEY", "dev-device-key")
 DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
+DEPLOY_REVISION = os.getenv("RENDER_GIT_COMMIT", os.getenv("GIT_COMMIT", "local"))[:12]
 GUARDIAN_SESSIONS: set[str] = set()
 STAFF_SESSIONS: set[str] = set()
+try:
+    GUARDIAN_SESSION_DAYS = max(1, min(int(os.getenv("GUARDIAN_SESSION_DAYS", "30")), 365))
+except ValueError:
+    GUARDIAN_SESSION_DAYS = 30
 
 allowed_origins = [origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "*").split(",")]
 app.add_middleware(
@@ -147,8 +153,29 @@ def bearer_token(authorization: str) -> str:
     return authorization[len(prefix) :] if authorization.startswith(prefix) else ""
 
 
+def guardian_token_hash(token: str) -> str:
+    return sha256(token.encode("utf-8")).hexdigest()
+
+
+def register_guardian_session(token: str) -> None:
+    if postgres_repository:
+        postgres_repository.register_guardian_session(
+            guardian_token_hash(token),
+            "patient-01",
+            datetime.now(timezone.utc) + timedelta(days=GUARDIAN_SESSION_DAYS),
+        )
+    else:
+        GUARDIAN_SESSIONS.add(token)
+
+
 def require_guardian(authorization: str) -> None:
-    if bearer_token(authorization) not in GUARDIAN_SESSIONS:
+    token = bearer_token(authorization)
+    valid = (
+        postgres_repository.guardian_session_exists(guardian_token_hash(token))
+        if postgres_repository and token
+        else token in GUARDIAN_SESSIONS
+    )
+    if not valid:
         raise HTTPException(401, "로그인이 필요합니다.")
 
 
@@ -164,7 +191,12 @@ def dashboard():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "care-signal-api", "storage": STORAGE_MODE}
+    return {
+        "status": "ok",
+        "service": "care-signal-api",
+        "storage": STORAGE_MODE,
+        "revision": DEPLOY_REVISION,
+    }
 
 
 @app.get("/guardian")
@@ -267,8 +299,19 @@ def guardian_login(payload: GuardianLogin):
     if not secrets.compare_digest(payload.connection_code.strip().upper(), GUARDIAN_CONNECTION_CODE.upper()):
         raise HTTPException(401, "연결 코드를 확인해 주세요.")
     token = secrets.token_urlsafe(32)
-    GUARDIAN_SESSIONS.add(token)
+    register_guardian_session(token)
     return {"access_token": token, "patient_id": "patient-01"}
+
+
+@app.post("/api/v1/guardian/logout")
+def guardian_logout(authorization: str = Header(default="")):
+    require_guardian(authorization)
+    token = bearer_token(authorization)
+    if postgres_repository:
+        postgres_repository.revoke_guardian_session(guardian_token_hash(token))
+    else:
+        GUARDIAN_SESSIONS.discard(token)
+    return {"signed_out": True}
 
 
 @app.get("/api/v1/guardian/patient")

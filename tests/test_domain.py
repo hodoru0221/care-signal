@@ -1,6 +1,7 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 
-from backend.domain import MonitoringStore
+from backend.domain import MonitoringStore, SensorObservation
 from backend.notifications import build_push_messages
 from backend.ward import WARD_LAYOUT, ward_map_payload
 
@@ -105,6 +106,24 @@ class MonitoringStoreTests(unittest.TestCase):
         history = store.guardian_events("room-01")
         self.assertEqual(history[0]["summary"], "병동 상태 확인")
         self.assertNotIn("confidence", history[0])
+
+    def test_guardian_sensor_status_uses_latest_room_observation(self):
+        store = MonitoringStore()
+        now = datetime.now(timezone.utc)
+        store.record_observation(SensorObservation(
+            observation_id="stale", room_id="room-01", device_id="sensor-old",
+            state="IN_BED", confidence=0.9, captured_at=(now - timedelta(minutes=5)).isoformat(),
+            received_at=(now - timedelta(minutes=5)).isoformat(), model_version="v1",
+        ))
+        self.assertFalse(store.guardian_view("room-01")["sensor_online"])
+
+        store.record_observation(SensorObservation(
+            observation_id="fresh", room_id="room-01", device_id="sensor-live",
+            state="IN_BED", confidence=0.95, captured_at=now.isoformat(),
+            received_at=now.isoformat(), model_version="v1",
+        ))
+        self.assertTrue(store.guardian_view("room-01")["sensor_online"])
+        self.assertFalse(store.guardian_view("room-02")["sensor_online"])
 
 
 if __name__ == "__main__":

@@ -19,6 +19,8 @@ services:
         value: "*"
       - key: DEMO_MODE
         value: "true"
+      - key: GUARDIAN_SESSION_DAYS
+        value: "30"
       # Neon is the primary database when this secret is configured in Render.
       - key: NEON_DATABASE_URL
         sync: false

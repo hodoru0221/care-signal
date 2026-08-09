@@ -155,3 +155,10 @@ export async function savePushToken(baseUrl: string, accessToken: string, pushTo
     body: JSON.stringify({ token: pushToken }),
   });
 }
+
+export async function logout(baseUrl: string, accessToken: string) {
+  await request(baseUrl, "/api/v1/guardian/logout", {
+    method: "POST",
+    headers: authorization(accessToken),
+  });
+}

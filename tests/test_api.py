@@ -31,6 +31,13 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
+    def test_health_reports_storage_and_deployment_revision(self):
+        payload = self.client.get("/health").json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["service"], "care-signal-api")
+        self.assertIn(payload["storage"], {"memory", "render-postgres", "neon-postgres"})
+        self.assertTrue(payload["revision"])
+
     def test_staff_and_guardian_authentication_boundaries(self):
         self.assertEqual(self.client.get("/api/v1/ward/map").status_code, 401)
         self.assertEqual(
@@ -57,6 +64,20 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(
             self.client.get("/api/v1/ward/map", headers=guardian_headers).status_code,
+            401,
+        )
+
+    def test_guardian_logout_revokes_session(self):
+        login = self.client.post(
+            "/api/v1/guardian/login", json={"connection_code": "care-101"}
+        )
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        self.assertEqual(
+            self.client.post("/api/v1/guardian/logout", headers=headers).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.get("/api/v1/guardian/patient", headers=headers).status_code,
             401,
         )
 

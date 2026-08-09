@@ -29,3 +29,12 @@ export async function getGuardianPushToken(): Promise<string | null> {
   if (!projectId) return null;
   return (await Notifications.getExpoPushTokenAsync({ projectId })).data;
 }
+
+export function subscribeToGuardianNotifications(onUpdate: () => void): () => void {
+  const received = Notifications.addNotificationReceivedListener(() => onUpdate());
+  const opened = Notifications.addNotificationResponseReceivedListener(() => onUpdate());
+  return () => {
+    received.remove();
+    opened.remove();
+  };
+}

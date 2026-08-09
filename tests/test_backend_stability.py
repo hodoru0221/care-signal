@@ -19,6 +19,7 @@ class AtomicMemoryRepository:
     def __init__(self):
         self.snapshot = None
         self.lock = threading.Lock()
+        self.devices = []
 
     def initialize(self):
         pass
@@ -39,6 +40,9 @@ class AtomicMemoryRepository:
             snapshot, result = mutator(deepcopy(self.snapshot))
             self.snapshot = deepcopy(snapshot)
             return result
+
+    def device_statuses(self):
+        return deepcopy(self.devices)
 
 
 class BackendStabilityTests(unittest.TestCase):
@@ -97,6 +101,17 @@ class BackendStabilityTests(unittest.TestCase):
             thread.join()
 
         self.assertEqual(len(first.room_history("room-02", 200)), 80)
+
+    def test_persistent_guardian_view_uses_repository_device_freshness(self):
+        repository = AtomicMemoryRepository()
+        store = PersistentMonitoringStore(repository)
+        self.assertFalse(store.guardian_view("room-01")["sensor_online"])
+        repository.devices = [
+            {"room_id": "room-01", "online": True},
+            {"room_id": "room-02", "online": False},
+        ]
+        self.assertTrue(store.guardian_view("room-01")["sensor_online"])
+        self.assertFalse(store.guardian_view("room-02")["sensor_online"])
 
 
 if __name__ == "__main__":
