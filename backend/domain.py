@@ -1,5 +1,7 @@
-from dataclasses import asdict, dataclass
+from copy import deepcopy
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
+from math import isfinite
 from threading import Lock
 from typing import Dict, Optional
 from uuid import uuid4
@@ -10,6 +12,7 @@ from backend.ward import WARD_ROOM_IDS
 VALID_STATES = {"EMPTY", "IN_BED", "OUT_OF_BED", "MOVEMENT_ANOMALY"}
 ACTIVE_EVENT_STATUSES = {"OPEN", "ACKNOWLEDGED", "RESPONDING"}
 MAX_HISTORY_PER_ROOM = 500
+MAX_EVENTS = 2000
 
 
 def now_iso() -> str:
@@ -59,19 +62,48 @@ class MonitoringStore:
             return {
                 "rooms": {key: asdict(value) for key, value in self._rooms.items()},
                 "events": {key: asdict(value) for key, value in self._events.items()},
-                "history": self._history,
+                "history": deepcopy(self._history),
             }
 
     def import_snapshot(self, snapshot: dict) -> None:
+        if not isinstance(snapshot, dict):
+            raise ValueError("snapshot must be an object")
         with self._lock:
             rooms = snapshot.get("rooms", {})
             events = snapshot.get("events", {})
             history = snapshot.get("history", {})
-            self._rooms = {key: RoomStatus(**value) for key, value in rooms.items()}
-            self._events = {key: Event(**value) for key, value in events.items()}
+            if not isinstance(rooms, dict) or not isinstance(events, dict):
+                raise ValueError("snapshot rooms and events must be objects")
+            if not isinstance(history, dict):
+                history = {}
+
+            room_fields = {field.name for field in fields(RoomStatus)}
+            event_fields = {field.name for field in fields(Event)}
+            self._rooms = {}
+            for room_id in WARD_ROOM_IDS:
+                value = rooms.get(room_id)
+                if not isinstance(value, dict):
+                    continue
+                room_values = {key: item for key, item in value.items() if key in room_fields}
+                room_values["room_id"] = room_id
+                self._rooms[room_id] = RoomStatus(**room_values)
+            imported_events = []
+            for event_id, value in events.items():
+                if not isinstance(value, dict):
+                    continue
+                try:
+                    event = Event(**{key: item for key, item in value.items() if key in event_fields})
+                except (TypeError, ValueError):
+                    continue
+                if event.id != event_id or event.room_id not in WARD_ROOM_IDS:
+                    continue
+                imported_events.append(event)
+            imported_events.sort(key=lambda event: event.created_at, reverse=True)
+            self._events = {event.id: event for event in imported_events[:MAX_EVENTS]}
             self._history = {
-                key: list(values)[-MAX_HISTORY_PER_ROOM:]
-                for key, values in history.items()
+                room_id: [item for item in values if isinstance(item, dict)][-MAX_HISTORY_PER_ROOM:]
+                for room_id in WARD_ROOM_IDS
+                if isinstance((values := history.get(room_id)), list)
             }
             for room_id in WARD_ROOM_IDS:
                 if room_id not in self._rooms:
@@ -88,9 +120,11 @@ class MonitoringStore:
         }[state]
 
     def update_room(self, room_id: str, state: str, confidence: float) -> dict:
+        if room_id not in WARD_ROOM_IDS:
+            raise ValueError(f"Unknown room: {room_id}")
         if state not in VALID_STATES:
             raise ValueError(f"Unknown state: {state}")
-        if not 0 <= confidence <= 1:
+        if isinstance(confidence, bool) or not isfinite(confidence) or not 0 <= confidence <= 1:
             raise ValueError("confidence must be between 0 and 1")
 
         with self._lock:
@@ -117,7 +151,18 @@ class MonitoringStore:
                     created_at=now_iso(),
                 )
                 self._events[event.id] = event
+                self._trim_events()
             return asdict(current)
+
+    def _trim_events(self) -> None:
+        if len(self._events) <= MAX_EVENTS:
+            return
+        removable = sorted(
+            (event for event in self._events.values() if event.status not in ACTIVE_EVENT_STATUSES),
+            key=lambda event: event.created_at,
+        )
+        for event in removable[: len(self._events) - MAX_EVENTS]:
+            del self._events[event.id]
 
     def _has_active_event(self, room_id: str, event_type: str) -> bool:
         return any(
@@ -142,7 +187,7 @@ class MonitoringStore:
             if room_id not in self._rooms:
                 raise KeyError(room_id)
             safe_limit = max(1, min(limit, 200))
-            return list(reversed(self._history.get(room_id, [])[-safe_limit:]))
+            return deepcopy(list(reversed(self._history.get(room_id, [])[-safe_limit:])))
 
     def events(self) -> list[dict]:
         with self._lock:

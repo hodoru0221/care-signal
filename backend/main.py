@@ -1,6 +1,7 @@
 import os
 import secrets
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -53,31 +54,31 @@ app.add_middleware(
 
 
 class InferenceInput(BaseModel):
-    room_id: str = "room-01"
-    state: str
+    room_id: str = Field(default="room-01", min_length=1, max_length=32)
+    state: Literal["EMPTY", "IN_BED", "OUT_OF_BED", "MOVEMENT_ANOMALY"]
     confidence: float = Field(ge=0, le=1)
 
 
 class EventUpdate(BaseModel):
-    status: str
-    actor: str = "demo-nurse"
+    status: Literal["ACKNOWLEDGED", "RESPONDING", "COMPLETED", "FALSE_ALARM"]
+    actor: str = Field(default="demo-nurse", min_length=1, max_length=100)
 
 
 class GuardianLogin(BaseModel):
-    connection_code: str
+    connection_code: str = Field(min_length=1, max_length=100)
 
 
 class StaffLogin(BaseModel):
-    access_code: str
+    access_code: str = Field(min_length=1, max_length=100)
 
 
 class PushTokenInput(BaseModel):
-    token: str
+    token: str = Field(min_length=1, max_length=512)
 
 
 class DemoStateInput(BaseModel):
-    room_id: str = "room-01"
-    state: str
+    room_id: str = Field(default="room-01", min_length=1, max_length=32)
+    state: Literal["EMPTY", "IN_BED", "OUT_OF_BED", "MOVEMENT_ANOMALY"]
     confidence: float = Field(default=0.95, ge=0, le=1)
 
 
