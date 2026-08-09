@@ -141,8 +141,6 @@ flowchart LR
 | `received_at` | TIMESTAMPTZ | 서버 기록 |
 | `model_version` | TEXT | NOT NULL |
 | `sequence_no` | BIGINT | NULL 가능 |
-| `payload` | JSONB | 계약 원문, 비밀값 제외 |
-
 조회 인덱스는 `(room_id, captured_at DESC)`, `(device_id, received_at DESC)`를 둔다.
 
 ### `monitoring_snapshot`

@@ -2,6 +2,13 @@
 
 하드웨어 없이도 서버, 웹 대시보드와 경보 흐름을 개발할 수 있는 1차 프로토타입이다.
 
+## 현재 구현 문서
+
+- `SYSTEM_DESIGN.md`: 실제 모델 연결을 가정한 전체 시스템·데이터·API·보안 설계
+- `MODEL_INTEGRATION.md`: 모델 JSONL 표준화와 장애 복구 게이트웨이 사용법
+- `DEMO_RUNBOOK.md`: 서버부터 모델·보호자 앱·UNO R4까지 통합 시연 순서
+- `hardware/uno_r4_alert/README.md`: UNO R4 WiFi 현장 알림기 연결과 검증 한계
+
 ## 최종 접속 구조
 
 공개 HTTPS 서버 하나를 중심으로 다음 클라이언트가 연결된다.
@@ -39,6 +46,16 @@ uvicorn backend.main:app --reload
 - `GET /api/v1/rooms/{room_id}/history`: 병실별 최근 감지 기록
 
 병동 배치는 `backend/ward.py`에서 관리하고 감지 기록은 모니터링 스냅샷에 저장한다. 기존 스냅샷을 불러올 때 새 병실과 이력 구조가 자동으로 보완되므로 이전 데이터와 호환된다. 병실별 최근 기록은 스냅샷 크기가 계속 커지지 않도록 최대 500건을 유지한다.
+
+모델이 보낸 판정 원본 메타데이터는 별도 `sensor_observations` 테이블에 append-only로 저장한다. `observation_id`가 같으면 재전송으로 판단해 병실 이력과 사건을 다시 만들지 않는다. 직원 화면에서는 장치 온라인 여부, 마지막 수신, 모델 버전과 판정 지연을 확인할 수 있다.
+
+### 모델 성능 평가
+
+정답 라벨이 포함된 JSONL에서 혼동행렬, 정확도, macro F1, 상태별 precision/recall/F1과 수신 지연을 계산한다.
+
+```powershell
+python -m tools.evaluate_model evaluation.jsonl --output evaluation-report.json
+```
 
 병동 맵 응답은 정적 배치와 실시간 상태를 분리해 결합한다. 최상위에는 `id`, `name`, `rooms`, `stations`가 있고, 각 `rooms[]` 항목에는 `room_id`, 표시용 `label`·`bed_label`, 그리드 좌표 `x`·`y`·`width`·`height`, 그리고 `status`가 있다. `status`는 `room_id`, `state`, `confidence`, `risk_level`, `updated_at`을 담는다. 따라서 배치 변경은 과거 감지·사건 데이터 형식을 바꾸지 않는다.
 
