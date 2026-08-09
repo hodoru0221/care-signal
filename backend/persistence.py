@@ -4,7 +4,7 @@ from typing import Optional
 
 import psycopg
 
-from backend.domain import MonitoringStore
+from backend.domain import MonitoringStore, SensorObservation
 
 
 class PostgresSnapshotRepository:
@@ -23,6 +23,29 @@ class PostgresSnapshotRepository:
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
                 """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sensor_observations (
+                    observation_id TEXT PRIMARY KEY,
+                    room_id TEXT NOT NULL,
+                    device_id TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    confidence DOUBLE PRECISION NOT NULL,
+                    captured_at TIMESTAMPTZ NOT NULL,
+                    model_version TEXT NOT NULL,
+                    sequence_no BIGINT,
+                    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS sensor_observations_room_captured_idx "
+                "ON sensor_observations (room_id, captured_at DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS sensor_observations_device_captured_idx "
+                "ON sensor_observations (device_id, captured_at DESC)"
             )
             connection.execute(
                 """
@@ -83,6 +106,68 @@ class PostgresSnapshotRepository:
                 (payload,),
             )
             return result
+
+    def record_observation(self, observation: SensorObservation, mutator):
+        """Append an observation and update the snapshot in one transaction."""
+        with psycopg.connect(self.database_url) as connection:
+            inserted = connection.execute(
+                """
+                INSERT INTO sensor_observations
+                    (observation_id, room_id, device_id, state, confidence,
+                     captured_at, model_version, sequence_no)
+                VALUES (%s, %s, %s, %s, %s, %s::timestamptz, %s, %s)
+                ON CONFLICT (observation_id) DO NOTHING
+                RETURNING observation_id
+                """,
+                (observation.observation_id, observation.room_id, observation.device_id,
+                 observation.state, observation.confidence, observation.captured_at,
+                 observation.model_version, observation.sequence_no),
+            ).fetchone()
+            if inserted is None:
+                row = connection.execute(
+                    "SELECT payload FROM monitoring_snapshot WHERE id = 1"
+                ).fetchone()
+                return row[0], True
+            row = connection.execute(
+                "SELECT payload FROM monitoring_snapshot WHERE id = 1 FOR UPDATE"
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("monitoring snapshot is not initialized")
+            snapshot, result = mutator(row[0])
+            connection.execute(
+                "UPDATE monitoring_snapshot SET payload = %s::jsonb, updated_at = NOW() WHERE id = 1",
+                (json.dumps(snapshot, ensure_ascii=False),),
+            )
+            return (snapshot, result), False
+
+    def observations(self, room_id=None, device_id=None, limit=100) -> list[dict]:
+        clauses, params = [], []
+        if room_id is not None:
+            clauses.append("room_id = %s"); params.append(room_id)
+        if device_id is not None:
+            clauses.append("device_id = %s"); params.append(device_id)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        params.append(limit)
+        with psycopg.connect(self.database_url) as connection:
+            rows = connection.execute(
+                "SELECT observation_id, room_id, device_id, state, confidence, "
+                "captured_at, model_version, sequence_no FROM sensor_observations" + where +
+                " ORDER BY captured_at DESC, received_at DESC LIMIT %s", params
+            ).fetchall()
+        return [{"observation_id": row[0], "room_id": row[1], "device_id": row[2],
+                 "state": row[3], "confidence": row[4], "captured_at": row[5].isoformat(),
+                 "model_version": row[6], "sequence_no": row[7]} for row in rows]
+
+    def device_statuses(self) -> list[dict]:
+        with psycopg.connect(self.database_url) as connection:
+            rows = connection.execute(
+                """SELECT DISTINCT ON (device_id) device_id, room_id, captured_at,
+                          state, model_version, sequence_no
+                   FROM sensor_observations
+                   ORDER BY device_id, captured_at DESC, received_at DESC"""
+            ).fetchall()
+        return [{"device_id": row[0], "room_id": row[1], "last_seen_at": row[2].isoformat(),
+                 "state": row[3], "model_version": row[4], "sequence_no": row[5]} for row in rows]
 
     def register_push_token(self, patient_id: str, token: str) -> None:
         with psycopg.connect(self.database_url) as connection:
@@ -161,6 +246,33 @@ class PersistentMonitoringStore:
 
     def update_room(self, room_id: str, state: str, confidence: float) -> dict:
         return self._mutate("update_room", room_id, state, confidence)
+
+    def record_observation(self, observation: SensorObservation) -> dict:
+        with self._lock:
+            def mutate(snapshot):
+                latest = MonitoringStore()
+                latest.import_snapshot(snapshot)
+                status = latest.update_room(
+                    observation.room_id, observation.state, observation.confidence
+                )
+                return latest.export_snapshot(), status
+
+            value, duplicate = self.repository.record_observation(observation, mutate)
+            if duplicate:
+                snapshot = value
+                self.memory.import_snapshot(snapshot)
+                status = self.memory.room(observation.room_id)
+            else:
+                snapshot, status = value
+                self.memory.import_snapshot(snapshot)
+            return {**status, "observation_id": observation.observation_id,
+                    "duplicate": duplicate}
+
+    def observations(self, room_id=None, device_id=None, limit=100) -> list[dict]:
+        return self.repository.observations(room_id, device_id, limit)
+
+    def device_statuses(self) -> list[dict]:
+        return self.repository.device_statuses()
 
     def update_event(self, event_id: str, status: str, actor: str) -> dict:
         return self._mutate("update_event", event_id, status, actor)

@@ -13,6 +13,7 @@ VALID_STATES = {"EMPTY", "IN_BED", "OUT_OF_BED", "MOVEMENT_ANOMALY"}
 ACTIVE_EVENT_STATUSES = {"OPEN", "ACKNOWLEDGED", "RESPONDING"}
 MAX_HISTORY_PER_ROOM = 500
 MAX_EVENTS = 2000
+MAX_OBSERVATIONS = 5000
 
 
 def now_iso() -> str:
@@ -46,6 +47,18 @@ class Event:
     actor: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class SensorObservation:
+    observation_id: str
+    room_id: str
+    device_id: str
+    state: str
+    confidence: float
+    captured_at: str
+    model_version: str
+    sequence_no: Optional[int] = None
+
+
 class MonitoringStore:
     """Thread-safe in-memory store used by the prototype and unit tests."""
 
@@ -56,6 +69,7 @@ class MonitoringStore:
         }
         self._events: Dict[str, Event] = {}
         self._history: Dict[str, list[dict]] = {room_id: [] for room_id in WARD_ROOM_IDS}
+        self._observations: Dict[str, SensorObservation] = {}
 
     def export_snapshot(self) -> dict:
         with self._lock:
@@ -120,6 +134,12 @@ class MonitoringStore:
         }[state]
 
     def update_room(self, room_id: str, state: str, confidence: float) -> dict:
+        self._validate_room_update(room_id, state, confidence)
+        with self._lock:
+            return self._update_room_locked(room_id, state, confidence)
+
+    @staticmethod
+    def _validate_room_update(room_id: str, state: str, confidence: float) -> None:
         if room_id not in WARD_ROOM_IDS:
             raise ValueError(f"Unknown room: {room_id}")
         if state not in VALID_STATES:
@@ -127,32 +147,59 @@ class MonitoringStore:
         if isinstance(confidence, bool) or not isfinite(confidence) or not 0 <= confidence <= 1:
             raise ValueError("confidence must be between 0 and 1")
 
-        with self._lock:
-            previous = self._rooms.get(room_id)
-            risk = self._risk_for(state)
-            current = RoomStatus(room_id, state, confidence, risk, now_iso())
-            self._rooms[room_id] = current
-            room_history = self._history.setdefault(room_id, [])
-            room_history.append(asdict(current))
-            if len(room_history) > MAX_HISTORY_PER_ROOM:
-                del room_history[:-MAX_HISTORY_PER_ROOM]
+    def _update_room_locked(self, room_id: str, state: str, confidence: float) -> dict:
+        previous = self._rooms.get(room_id)
+        risk = self._risk_for(state)
+        current = RoomStatus(room_id, state, confidence, risk, now_iso())
+        self._rooms[room_id] = current
+        room_history = self._history.setdefault(room_id, [])
+        room_history.append(asdict(current))
+        if len(room_history) > MAX_HISTORY_PER_ROOM:
+            del room_history[:-MAX_HISTORY_PER_ROOM]
 
-            changed_to_risk = risk != "NORMAL" and (
-                previous is None or previous.state != state
+        changed_to_risk = risk != "NORMAL" and (previous is None or previous.state != state)
+        if changed_to_risk and not self._has_active_event(room_id, state):
+            event = Event(
+                id=f"evt-{uuid4().hex[:8]}", room_id=room_id, event_type=state,
+                risk_level=risk, confidence=confidence, status="OPEN", created_at=now_iso(),
             )
-            if changed_to_risk and not self._has_active_event(room_id, state):
-                event = Event(
-                    id=f"evt-{uuid4().hex[:8]}",
-                    room_id=room_id,
-                    event_type=state,
-                    risk_level=risk,
-                    confidence=confidence,
-                    status="OPEN",
-                    created_at=now_iso(),
-                )
-                self._events[event.id] = event
-                self._trim_events()
-            return asdict(current)
+            self._events[event.id] = event
+            self._trim_events()
+        return asdict(current)
+
+    def record_observation(self, observation: SensorObservation) -> dict:
+        self._validate_room_update(observation.room_id, observation.state, observation.confidence)
+        with self._lock:
+            if observation.observation_id in self._observations:
+                return {**asdict(self._rooms[observation.room_id]),
+                        "observation_id": observation.observation_id, "duplicate": True}
+            self._observations[observation.observation_id] = observation
+            while len(self._observations) > MAX_OBSERVATIONS:
+                del self._observations[next(iter(self._observations))]
+            status = self._update_room_locked(
+                observation.room_id, observation.state, observation.confidence
+            )
+            return {**status, "observation_id": observation.observation_id, "duplicate": False}
+
+    def observations(
+        self, room_id: Optional[str] = None, device_id: Optional[str] = None, limit: int = 100
+    ) -> list[dict]:
+        with self._lock:
+            values = reversed(list(self._observations.values()))
+            return [asdict(item) for item in values
+                    if (room_id is None or item.room_id == room_id)
+                    and (device_id is None or item.device_id == device_id)][:limit]
+
+    def device_statuses(self) -> list[dict]:
+        with self._lock:
+            latest: dict[str, SensorObservation] = {}
+            for item in self._observations.values():
+                if item.device_id not in latest or item.captured_at > latest[item.device_id].captured_at:
+                    latest[item.device_id] = item
+            return [{"device_id": item.device_id, "room_id": item.room_id,
+                     "last_seen_at": item.captured_at, "state": item.state,
+                     "model_version": item.model_version, "sequence_no": item.sequence_no}
+                    for item in sorted(latest.values(), key=lambda value: value.device_id)]
 
     def _trim_events(self) -> None:
         if len(self._events) <= MAX_EVENTS:

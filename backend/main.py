@@ -1,14 +1,17 @@
 import os
 import secrets
+from datetime import datetime, timezone
+from math import isfinite
 from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from backend.domain import MonitoringStore
+from backend.domain import MonitoringStore, SensorObservation, now_iso
 from backend.persistence import (
     PersistentMonitoringStore,
     PostgresSnapshotRepository,
@@ -54,9 +57,33 @@ app.add_middleware(
 
 
 class InferenceInput(BaseModel):
+    observation_id: str = Field(default_factory=lambda: str(uuid4()), min_length=1, max_length=128)
     room_id: str = Field(default="room-01", min_length=1, max_length=32)
+    device_id: str = Field(default="legacy-device", min_length=1, max_length=128)
     state: Literal["EMPTY", "IN_BED", "OUT_OF_BED", "MOVEMENT_ANOMALY"]
     confidence: float = Field(ge=0, le=1)
+    captured_at: str = Field(default_factory=now_iso, min_length=1, max_length=64)
+    model_version: str = Field(default="legacy", min_length=1, max_length=128)
+    sequence_no: int | None = Field(default=None, ge=0)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def confidence_must_be_finite(cls, value):
+        if isinstance(value, float) and not isfinite(value):
+            # Replace non-JSON-safe input before FastAPI renders a validation error.
+            return 2.0
+        return value
+
+    @field_validator("captured_at")
+    @classmethod
+    def captured_at_must_be_utc_iso8601(cls, value: str) -> str:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("captured_at must be a valid UTC ISO8601 timestamp") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+            raise ValueError("captured_at must include the UTC timezone")
+        return parsed.astimezone(timezone.utc).isoformat()
 
 
 class EventUpdate(BaseModel):
@@ -111,6 +138,16 @@ def apply_state(room_id: str, state: str, confidence: float) -> dict:
     created = next((event for event in store.events() if event["id"] not in before), None)
     if created:
         notify_guardians(created["event_type"], created["id"])
+    return result
+
+
+def apply_observation(observation: SensorObservation) -> dict:
+    before = {event["id"] for event in store.events()}
+    result = store.record_observation(observation)
+    if not result["duplicate"]:
+        created = next((event for event in store.events() if event["id"] not in before), None)
+        if created:
+            notify_guardians(created["event_type"], created["id"])
     return result
 
 
@@ -186,9 +223,28 @@ def receive_inference(payload: InferenceInput, x_device_key: str = Header(defaul
     if not secrets.compare_digest(x_device_key, DEVICE_API_KEY):
         raise HTTPException(401, "장치 인증에 실패했습니다.")
     try:
-        return apply_state(payload.room_id, payload.state, payload.confidence)
+        return apply_observation(SensorObservation(**payload.model_dump()))
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+
+
+@app.get("/api/v1/observations")
+def observations(
+    room_id: str | None = Query(default=None, max_length=32),
+    device_id: str | None = Query(default=None, min_length=1, max_length=128),
+    limit: int = Query(default=100, ge=1, le=500),
+    authorization: str = Header(default=""),
+):
+    require_staff(authorization)
+    if room_id is not None and room_id not in WARD_ROOM_IDS:
+        raise HTTPException(400, f"Unknown room: {room_id}")
+    return store.observations(room_id, device_id, limit)
+
+
+@app.get("/api/v1/devices/status")
+def devices_status(authorization: str = Header(default="")):
+    require_staff(authorization)
+    return store.device_statuses()
 
 
 @app.get("/api/v1/events")
