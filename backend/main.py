@@ -132,15 +132,6 @@ def notify_guardians(kind: str, event_id: str | None) -> None:
         pass
 
 
-def apply_state(room_id: str, state: str, confidence: float) -> dict:
-    before = {event["id"] for event in store.events()}
-    result = store.update_room(room_id, state, confidence)
-    created = next((event for event in store.events() if event["id"] not in before), None)
-    if created:
-        notify_guardians(created["event_type"], created["id"])
-    return result
-
-
 def apply_observation(observation: SensorObservation) -> dict:
     before = {event["id"] for event in store.events()}
     result = store.record_observation(observation)
@@ -316,7 +307,15 @@ def demo_state(payload: DemoStateInput, authorization: str = Header(default=""))
     if payload.room_id not in WARD_ROOM_IDS:
         raise HTTPException(400, "병동 맵에 등록되지 않은 병실입니다.")
     try:
-        return apply_state(payload.room_id, payload.state, payload.confidence)
+        return apply_observation(SensorObservation(
+            observation_id=f"demo-{uuid4()}",
+            room_id=payload.room_id,
+            device_id="demo-console",
+            state=payload.state,
+            confidence=payload.confidence,
+            captured_at=now_iso(),
+            model_version="demo-panel",
+        ))
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 

@@ -131,6 +131,21 @@ class ApiTests(unittest.TestCase):
             422,
         )
 
+    def test_demo_state_uses_the_observation_pipeline(self):
+        headers = self.staff_headers()
+        response = self.client.post(
+            "/api/v1/demo/state",
+            headers=headers,
+            json={"room_id": "room-05", "state": "IN_BED", "confidence": 0.92},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["duplicate"])
+        records = self.client.get(
+            "/api/v1/observations?room_id=room-05", headers=headers
+        ).json()
+        self.assertEqual(records[0]["device_id"], "demo-console")
+        self.assertEqual(records[0]["model_version"], "demo-panel")
+
     def test_invalid_payloads_and_credentials_are_rejected(self):
         headers = self.staff_headers()
         self.assertEqual(
