@@ -38,6 +38,12 @@ class ApiTests(unittest.TestCase):
         self.assertIn(payload["storage"], {"memory", "render-postgres", "neon-postgres"})
         self.assertTrue(payload["revision"])
 
+    def test_public_pages_do_not_embed_demo_credentials(self):
+        dashboard = self.client.get("/").text
+        guardian = self.client.get("/guardian").text
+        self.assertNotIn('value="NURSE-101"', dashboard)
+        self.assertNotIn("시연 코드: CARE-101", guardian)
+
     def test_staff_and_guardian_authentication_boundaries(self):
         self.assertEqual(self.client.get("/api/v1/ward/map").status_code, 401)
         self.assertEqual(
@@ -80,6 +86,90 @@ class ApiTests(unittest.TestCase):
             self.client.get("/api/v1/guardian/patient", headers=headers).status_code,
             401,
         )
+
+    def test_staff_logout_revokes_session(self):
+        headers = self.staff_headers()
+        self.assertEqual(
+            self.client.post("/api/v1/staff/logout", headers=headers).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.get("/api/v1/ward/map", headers=headers).status_code,
+            401,
+        )
+
+    def test_database_sessions_survive_memory_reset_and_store_only_hashes(self):
+        class SessionRepository:
+            def __init__(self):
+                self.guardian = set()
+                self.staff = set()
+
+            def register_guardian_session(self, token_hash, _patient_id, _expires_at):
+                self.guardian.add(token_hash)
+
+            def guardian_session_exists(self, token_hash):
+                return token_hash in self.guardian
+
+            def revoke_guardian_session(self, token_hash):
+                self.guardian.discard(token_hash)
+
+            def register_staff_session(self, token_hash, _role, _expires_at):
+                self.staff.add(token_hash)
+
+            def staff_session_exists(self, token_hash):
+                return token_hash in self.staff
+
+            def revoke_staff_session(self, token_hash):
+                self.staff.discard(token_hash)
+
+        repository = SessionRepository()
+        with patch.object(main, "postgres_repository", repository):
+            guardian_login = self.client.post(
+                "/api/v1/guardian/login", json={"connection_code": "care-101"}
+            )
+            staff_login = self.client.post(
+                "/api/v1/staff/login", json={"access_code": "nurse-101"}
+            )
+            guardian_token = guardian_login.json()["access_token"]
+            staff_token = staff_login.json()["access_token"]
+            main.GUARDIAN_SESSIONS.clear()
+            main.STAFF_SESSIONS.clear()
+
+            self.assertEqual(
+                self.client.get(
+                    "/api/v1/guardian/patient",
+                    headers={"Authorization": f"Bearer {guardian_token}"},
+                ).status_code,
+                200,
+            )
+            self.assertEqual(
+                self.client.get(
+                    "/api/v1/ward/map",
+                    headers={"Authorization": f"Bearer {staff_token}"},
+                ).status_code,
+                200,
+            )
+            self.assertNotIn(guardian_token, repository.guardian)
+            self.assertNotIn(staff_token, repository.staff)
+            self.assertTrue(all(len(value) == 64 for value in repository.guardian | repository.staff))
+
+    def test_room_status_and_alert_device_are_not_public(self):
+        self.assertEqual(
+            self.client.get("/api/v1/rooms/room-01/status").status_code,
+            401,
+        )
+        self.assertEqual(
+            self.client.get(
+                "/api/v1/rooms/room-01/status", headers=self.staff_headers()
+            ).status_code,
+            200,
+        )
+        main.store.update_room("room-01", "OUT_OF_BED", 0.9)
+        url = "/api/v1/devices/uno-room-01/alert?room_id=room-01&location=room"
+        self.assertEqual(self.client.get(url).status_code, 401)
+        response = self.client.get(url, headers={"X-Device-Key": "dev-device-key"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["sound"])
 
     def test_ward_map_contains_layout_and_each_live_room_status(self):
         response = self.client.get("/api/v1/ward/map", headers=self.staff_headers())

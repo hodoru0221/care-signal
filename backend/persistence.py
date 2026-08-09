@@ -71,6 +71,20 @@ class PostgresSnapshotRepository:
                 "CREATE INDEX IF NOT EXISTS guardian_sessions_expiry_idx "
                 "ON guardian_sessions (expires_at)"
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS staff_sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    role TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    expires_at TIMESTAMPTZ NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS staff_sessions_expiry_idx "
+                "ON staff_sessions (expires_at)"
+            )
 
     def load(self) -> Optional[dict]:
         with psycopg.connect(self.database_url) as connection:
@@ -244,6 +258,41 @@ class PostgresSnapshotRepository:
         with psycopg.connect(self.database_url) as connection:
             connection.execute(
                 "DELETE FROM guardian_sessions WHERE token_hash = %s",
+                (token_hash,),
+            )
+
+    def register_staff_session(
+        self, token_hash: str, role: str, expires_at: datetime
+    ) -> None:
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute("DELETE FROM staff_sessions WHERE expires_at <= NOW()")
+            connection.execute(
+                """
+                INSERT INTO staff_sessions (token_hash, role, created_at, expires_at)
+                VALUES (%s, %s, NOW(), %s)
+                ON CONFLICT (token_hash) DO UPDATE
+                SET role = EXCLUDED.role,
+                    created_at = NOW(),
+                    expires_at = EXCLUDED.expires_at
+                """,
+                (token_hash, role, expires_at),
+            )
+
+    def staff_session_exists(self, token_hash: str) -> bool:
+        with psycopg.connect(self.database_url) as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM staff_sessions
+                WHERE token_hash = %s AND expires_at > NOW()
+                """,
+                (token_hash,),
+            ).fetchone()
+            return row is not None
+
+    def revoke_staff_session(self, token_hash: str) -> None:
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute(
+                "DELETE FROM staff_sessions WHERE token_hash = %s",
                 (token_hash,),
             )
 

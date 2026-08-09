@@ -23,7 +23,6 @@
     <h2>환자 연결</h2><p class="muted">병동에서 받은 연결 코드를 입력해 주세요.</p>
     <input id="code" placeholder="연결 코드" autocomplete="one-time-code">
     <div id="error" class="error"></div><button onclick="login()">연결하기</button>
-    <p class="muted">시연 코드: CARE-101</p>
   </section>
   <section id="patient" class="hidden">
     <article class="card"><div class="muted" id="room"></div><h1 id="name"></h1><span id="badge" class="badge"></span><p id="message" class="message"></p><div class="row"><span>병실 센서</span><b id="sensor"></b></div><div class="row"><span>마지막 갱신</span><span id="updated"></span></div></article>
@@ -34,7 +33,7 @@
     const labels={STABLE:'안정',AWAY:'자리 비움',WARD_NOTIFIED:'병동 확인 요청',STAFF_CHECKING:'담당자 확인 중',CHECK_COMPLETED:'확인 완료'};
     const progressLabels={OPEN:'병동에 확인 요청이 전달되었습니다.',ACKNOWLEDGED:'담당자가 알림을 확인했습니다.',RESPONDING:'담당자가 환자 상태를 확인하고 있습니다.',COMPLETED:'상태 확인이 완료되었습니다.',FALSE_ALARM:'확인 결과 특이사항이 없었습니다.'};
     async function login(){const code=document.querySelector('#code').value;const r=await fetch('/api/v1/guardian/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({connection_code:code})});if(!r.ok){document.querySelector('#error').textContent='연결 코드를 확인해 주세요.';return}const d=await r.json();localStorage.setItem('guardianToken',d.access_token);show();}
-    function logout(){localStorage.removeItem('guardianToken');location.reload()}
+    async function logout(){const token=localStorage.getItem('guardianToken');localStorage.removeItem('guardianToken');if(token)try{await fetch('/api/v1/guardian/logout',{method:'POST',headers:{Authorization:`Bearer ${token}`}})}catch{}location.reload()}
     async function refresh(){const token=localStorage.getItem('guardianToken');if(!token)return;const r=await fetch('/api/v1/guardian/patient',{headers:{Authorization:`Bearer ${token}`}});if(r.status===401)return logout();const d=await r.json();document.querySelector('#room').textContent=d.patient.room_label;document.querySelector('#name').textContent=d.patient.display_name+' 님';const b=document.querySelector('#badge');b.textContent=labels[d.display_state];b.className=`badge ${d.display_state}`;document.querySelector('#message').textContent=d.message;document.querySelector('#sensor').innerHTML=d.sensor_online?'<span class="pulse"></span>정상':'연결 확인 필요';document.querySelector('#updated').textContent=new Date(d.updated_at).toLocaleTimeString();document.querySelector('#progress').textContent=d.event?progressLabels[d.event.progress]:'최근 특이사항이 없습니다.';}
     function show(){document.querySelector('#login').classList.add('hidden');document.querySelector('#patient').classList.remove('hidden');refresh()}
     if(localStorage.getItem('guardianToken'))show();setInterval(refresh,3000);if('serviceWorker' in navigator)navigator.serviceWorker.register('/service-worker.js');

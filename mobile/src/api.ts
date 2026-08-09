@@ -21,6 +21,12 @@ export type GuardianEvent = {
   summary: string;
 };
 
+export type GuardianCache = {
+  status: GuardianStatus;
+  history: GuardianEvent[];
+  cached_at: string;
+};
+
 export type ApiErrorKind = "CONFIG" | "OFFLINE" | "TIMEOUT" | "SESSION_EXPIRED" | "SERVER" | "INVALID_RESPONSE";
 
 export class ApiError extends Error {
@@ -154,6 +160,36 @@ export async function savePushToken(baseUrl: string, accessToken: string, pushTo
     headers: { "Content-Type": "application/json", ...authorization(accessToken) },
     body: JSON.stringify({ token: pushToken }),
   });
+}
+
+export function encodeGuardianCache(
+  status: GuardianStatus,
+  history: GuardianEvent[],
+  cachedAt = new Date(),
+): string {
+  return JSON.stringify({
+    version: 1,
+    status,
+    history: history.slice(0, 5),
+    cached_at: cachedAt.toISOString(),
+  });
+}
+
+export function parseGuardianCache(value: string | null): GuardianCache | null {
+  if (!value) return null;
+  try {
+    const payload: unknown = JSON.parse(value);
+    if (!isRecord(payload) || payload.version !== 1 || !isString(payload.cached_at) || !Array.isArray(payload.history)) return null;
+    const cachedAt = new Date(payload.cached_at);
+    if (Number.isNaN(cachedAt.getTime())) return null;
+    return {
+      status: parseStatus(payload.status),
+      history: payload.history.slice(0, 5).map(parseEvent),
+      cached_at: cachedAt.toISOString(),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function logout(baseUrl: string, accessToken: string) {

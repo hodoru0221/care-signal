@@ -156,6 +156,10 @@ flowchart LR
 
 보호자 앱의 Expo Push Token과 연결 대상만 저장한다. 판정 신뢰도와 임상 세부정보는 푸시 메시지에 포함하지 않는다.
 
+### 로그인 세션
+
+배포 DB에는 보호자·직원 세션의 원문 토큰 대신 SHA-256 해시와 만료시각만 저장한다. 보호자 세션은 기본 30일, 직원 세션은 기본 12시간 유지되며 로그아웃 시 즉시 삭제한다. 따라서 Render 재시작으로 세션이 사라지지 않으면서 DB 유출 시 원문 bearer token이 직접 노출되지 않는다.
+
 ### 트랜잭션 경계
 
 새 관측 삽입과 `monitoring_snapshot` 갱신은 한 PostgreSQL 트랜잭션에서 수행한다. 스냅샷 행은 `SELECT ... FOR UPDATE`로 직렬화해 여러 서버 인스턴스가 동시에 갱신해도 상태가 사라지지 않게 한다.
@@ -192,6 +196,7 @@ flowchart LR
 ### 현장 알림기
 
 - `GET /api/v1/devices/{device_id}/alert?room_id=room-01&location=room`
+- 인증: `X-Device-Key`
 
 직원이 사건을 확인하면 경보음이 중지된다. 장치 인증과 heartbeat는 운영 전 추가 보안 범위다.
 

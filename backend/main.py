@@ -51,6 +51,10 @@ try:
     GUARDIAN_SESSION_DAYS = max(1, min(int(os.getenv("GUARDIAN_SESSION_DAYS", "30")), 365))
 except ValueError:
     GUARDIAN_SESSION_DAYS = 30
+try:
+    STAFF_SESSION_HOURS = max(1, min(int(os.getenv("STAFF_SESSION_HOURS", "12")), 72))
+except ValueError:
+    STAFF_SESSION_HOURS = 12
 
 allowed_origins = [origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "*").split(",")]
 app.add_middleware(
@@ -153,14 +157,14 @@ def bearer_token(authorization: str) -> str:
     return authorization[len(prefix) :] if authorization.startswith(prefix) else ""
 
 
-def guardian_token_hash(token: str) -> str:
+def session_token_hash(token: str) -> str:
     return sha256(token.encode("utf-8")).hexdigest()
 
 
 def register_guardian_session(token: str) -> None:
     if postgres_repository:
         postgres_repository.register_guardian_session(
-            guardian_token_hash(token),
+            session_token_hash(token),
             "patient-01",
             datetime.now(timezone.utc) + timedelta(days=GUARDIAN_SESSION_DAYS),
         )
@@ -171,7 +175,7 @@ def register_guardian_session(token: str) -> None:
 def require_guardian(authorization: str) -> None:
     token = bearer_token(authorization)
     valid = (
-        postgres_repository.guardian_session_exists(guardian_token_hash(token))
+        postgres_repository.guardian_session_exists(session_token_hash(token))
         if postgres_repository and token
         else token in GUARDIAN_SESSIONS
     )
@@ -180,8 +184,25 @@ def require_guardian(authorization: str) -> None:
 
 
 def require_staff(authorization: str) -> None:
-    if bearer_token(authorization) not in STAFF_SESSIONS:
+    token = bearer_token(authorization)
+    valid = (
+        postgres_repository.staff_session_exists(session_token_hash(token))
+        if postgres_repository and token
+        else token in STAFF_SESSIONS
+    )
+    if not valid:
         raise HTTPException(401, "직원 로그인이 필요합니다.")
+
+
+def register_staff_session(token: str) -> None:
+    if postgres_repository:
+        postgres_repository.register_staff_session(
+            session_token_hash(token),
+            "NURSE",
+            datetime.now(timezone.utc) + timedelta(hours=STAFF_SESSION_HOURS),
+        )
+    else:
+        STAFF_SESSIONS.add(token)
 
 
 @app.get("/")
@@ -215,7 +236,8 @@ def service_worker():
 
 
 @app.get("/api/v1/rooms/{room_id}/status")
-def room_status(room_id: str):
+def room_status(room_id: str, authorization: str = Header(default="")):
+    require_staff(authorization)
     try:
         return store.room(room_id)
     except KeyError:
@@ -290,7 +312,14 @@ def update_event(event_id: str, payload: EventUpdate, authorization: str = Heade
 
 
 @app.get("/api/v1/devices/{device_id}/alert")
-def device_alert(device_id: str, room_id: str = "room-01", location: str = "room"):
+def device_alert(
+    device_id: str,
+    room_id: str = "room-01",
+    location: str = "room",
+    x_device_key: str = Header(default=""),
+):
+    if not secrets.compare_digest(x_device_key, DEVICE_API_KEY):
+        raise HTTPException(401, "장치 인증에 실패했습니다.")
     return {"device_id": device_id, **store.device_alert(room_id, location)}
 
 
@@ -308,7 +337,7 @@ def guardian_logout(authorization: str = Header(default="")):
     require_guardian(authorization)
     token = bearer_token(authorization)
     if postgres_repository:
-        postgres_repository.revoke_guardian_session(guardian_token_hash(token))
+        postgres_repository.revoke_guardian_session(session_token_hash(token))
     else:
         GUARDIAN_SESSIONS.discard(token)
     return {"signed_out": True}
@@ -338,8 +367,19 @@ def staff_login(payload: StaffLogin):
     if not secrets.compare_digest(payload.access_code.strip().upper(), STAFF_ACCESS_CODE.upper()):
         raise HTTPException(401, "직원 인증 코드를 확인해 주세요.")
     token = secrets.token_urlsafe(32)
-    STAFF_SESSIONS.add(token)
+    register_staff_session(token)
     return {"access_token": token, "role": "NURSE", "demo_mode": DEMO_MODE}
+
+
+@app.post("/api/v1/staff/logout")
+def staff_logout(authorization: str = Header(default="")):
+    require_staff(authorization)
+    token = bearer_token(authorization)
+    if postgres_repository:
+        postgres_repository.revoke_staff_session(session_token_hash(token))
+    else:
+        STAFF_SESSIONS.discard(token)
+    return {"signed_out": True}
 
 
 @app.post("/api/v1/demo/state")

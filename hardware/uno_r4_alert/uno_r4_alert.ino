@@ -74,8 +74,8 @@ void pollAlert() {
   http.beginRequest();
   http.get(path);
   http.sendHeader("Accept", "application/json");
-  if (strlen(API_BEARER_TOKEN) > 0) {
-    http.sendHeader("Authorization", String("Bearer ") + API_BEARER_TOKEN);
+  if (strlen(DEVICE_API_KEY) > 0) {
+    http.sendHeader("X-Device-Key", DEVICE_API_KEY);
   }
   http.endRequest();
 

@@ -12,8 +12,8 @@
 #define ROOM_ID "room-01"
 #define DEVICE_LOCATION "room"
 
-// Leave empty when the endpoint does not require authentication.
-#define API_BEARER_TOKEN ""
+// Use the same device key configured on the API server. Keep it only in config.h.
+#define DEVICE_API_KEY "replace-with-device-key"
 
 // Connect a passive buzzer between this digital pin and GND.
 #define BUZZER_PIN 8

@@ -2,11 +2,12 @@ import { StatusBar } from "expo-status-bar";
 import * as SecureStore from "expo-secure-store";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, AppState, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { ApiError, DisplayState, EventProgress, getHistory, getPatient, GuardianEvent, GuardianStatus, login, logout, normalizeAndValidateBaseUrl, savePushToken } from "./src/api";
+import { ApiError, DisplayState, encodeGuardianCache, EventProgress, getHistory, getPatient, GuardianEvent, GuardianStatus, login, logout, normalizeAndValidateBaseUrl, parseGuardianCache, savePushToken } from "./src/api";
 import { getGuardianPushToken, subscribeToGuardianNotifications } from "./src/notifications";
 
 const TOKEN_KEY = "guardian_token";
 const SERVER_KEY = "server_url";
+const CACHE_KEY = "guardian_last_snapshot";
 const PUBLIC_API_URL = process.env.EXPO_PUBLIC_API_URL?.trim() ?? "";
 const DEFAULT_DEV_URL = "http://192.168.0.10:8000";
 const POLL_INTERVAL_MS = 15_000;
@@ -33,7 +34,10 @@ export default function App() {
 
   const signOut = useCallback(async (message = "", revokeRemote = true) => {
     if (revokeRemote && token) void logout(baseUrl, token).catch(() => undefined);
-    await SecureStore.deleteItemAsync(TOKEN_KEY);
+    await Promise.all([
+      SecureStore.deleteItemAsync(TOKEN_KEY),
+      SecureStore.deleteItemAsync(CACHE_KEY),
+    ]);
     setToken(null); setStatus(null); setHistory([]); setLastSyncedAt(null); setError(message);
   }, [baseUrl, token]);
   const refresh = useCallback(async (): Promise<boolean> => {
@@ -46,7 +50,16 @@ export default function App() {
       if (rejected?.status === "rejected" && rejected.reason instanceof ApiError && rejected.reason.kind === "SESSION_EXPIRED") { await signOut("보호자 연결이 만료되었습니다. 연결 코드를 다시 입력해 주세요.", false); return false; }
       if (patientResult.status === "fulfilled") setStatus(patientResult.value);
       if (historyResult.status === "fulfilled") setHistory(historyResult.value);
-      if (patientResult.status === "fulfilled" || historyResult.status === "fulfilled") setLastSyncedAt(new Date());
+      if (patientResult.status === "fulfilled" || historyResult.status === "fulfilled") {
+        const syncedAt = new Date();
+        setLastSyncedAt(syncedAt);
+        if (patientResult.status === "fulfilled" && historyResult.status === "fulfilled") {
+          void SecureStore.setItemAsync(
+            CACHE_KEY,
+            encodeGuardianCache(patientResult.value, historyResult.value, syncedAt),
+          ).catch(() => undefined);
+        }
+      }
       if (rejected?.status === "rejected") throw rejected.reason;
       setConnection("online"); setError("");
       return true;
@@ -57,7 +70,7 @@ export default function App() {
     } finally { refreshInFlight.current = false; setRefreshing(false); }
   }, [baseUrl, signOut, token]);
 
-  useEffect(() => { void (async () => { try { const [savedToken, savedUrl] = await Promise.all([SecureStore.getItemAsync(TOKEN_KEY), SecureStore.getItemAsync(SERVER_KEY)]); const configuredUrl = PUBLIC_API_URL || savedUrl || DEFAULT_DEV_URL; setBaseUrl(normalizeAndValidateBaseUrl(configuredUrl)); setToken(savedToken); } catch (caught) { setError(caught instanceof Error ? caught.message : "앱 설정을 불러오지 못했습니다."); } finally { setLoading(false); } })(); }, []);
+  useEffect(() => { void (async () => { try { const [savedToken, savedUrl, savedCache] = await Promise.all([SecureStore.getItemAsync(TOKEN_KEY), SecureStore.getItemAsync(SERVER_KEY), SecureStore.getItemAsync(CACHE_KEY)]); const configuredUrl = PUBLIC_API_URL || savedUrl || DEFAULT_DEV_URL; const cached = parseGuardianCache(savedCache); setBaseUrl(normalizeAndValidateBaseUrl(configuredUrl)); setToken(savedToken); if (savedToken && cached) { setStatus(cached.status); setHistory(cached.history); setLastSyncedAt(new Date(cached.cached_at)); } } catch (caught) { setError(caught instanceof Error ? caught.message : "앱 설정을 불러오지 못했습니다."); } finally { setLoading(false); } })(); }, []);
   useEffect(() => {
     if (!token) return;
     let cancelled = false;

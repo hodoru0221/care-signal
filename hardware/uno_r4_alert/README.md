@@ -16,7 +16,7 @@ Arduino IDE Library Manager에서 다음 라이브러리를 설치한다.
 - `ArduinoHttpClient`
 - `ArduinoJson` 7.x
 
-`config.example.h`를 `config.h`로 복사해 Wi-Fi와 서버 설정을 입력한다. `config.h`는 이 폴더의 `.gitignore`에 포함되어 있다. 인증 토큰을 포함한 비밀값은 스케치나 `config.example.h`에 넣지 않는다. 서버 인증서가 UNO R4 WiFi 펌웨어/루트 인증서 저장소에서 신뢰 가능해야 HTTPS 연결이 성공한다.
+`config.example.h`를 `config.h`로 복사해 Wi-Fi, 서버와 `DEVICE_API_KEY`를 입력한다. `config.h`는 이 폴더의 `.gitignore`에 포함되어 있다. 실제 장치 키를 스케치나 `config.example.h`에 넣지 않는다. 요청은 `X-Device-Key` 헤더로 인증한다. 서버 인증서가 UNO R4 WiFi 펌웨어/루트 인증서 저장소에서 신뢰 가능해야 HTTPS 연결이 성공한다.
 
 수동 부저를 기본값인 D8과 GND 사이에 연결한다. 능동 부저나 큰 부하를 직접 구동하지 말고 적절한 트랜지스터/저항 회로를 사용한다.
 
