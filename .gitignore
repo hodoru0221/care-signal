@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 .env
 .venv/
+.pnpm-store/
 mobile/node_modules/
 mobile/.expo/
 # The public API URL is safe to commit. Do not place secrets in mobile/.env.
