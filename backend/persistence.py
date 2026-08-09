@@ -1,10 +1,11 @@
 import json
 from threading import RLock
+from datetime import datetime, timezone
 from typing import Optional
 
 import psycopg
 
-from backend.domain import MonitoringStore, SensorObservation
+from backend.domain import DEVICE_ONLINE_SECONDS, MonitoringStore, SensorObservation
 
 
 class PostgresSnapshotRepository:
@@ -114,14 +115,14 @@ class PostgresSnapshotRepository:
                 """
                 INSERT INTO sensor_observations
                     (observation_id, room_id, device_id, state, confidence,
-                     captured_at, model_version, sequence_no)
-                VALUES (%s, %s, %s, %s, %s, %s::timestamptz, %s, %s)
+                     captured_at, model_version, sequence_no, received_at)
+                VALUES (%s, %s, %s, %s, %s, %s::timestamptz, %s, %s, %s::timestamptz)
                 ON CONFLICT (observation_id) DO NOTHING
                 RETURNING observation_id
                 """,
                 (observation.observation_id, observation.room_id, observation.device_id,
                  observation.state, observation.confidence, observation.captured_at,
-                 observation.model_version, observation.sequence_no),
+                 observation.model_version, observation.sequence_no, observation.received_at),
             ).fetchone()
             if inserted is None:
                 row = connection.execute(
@@ -151,23 +152,28 @@ class PostgresSnapshotRepository:
         with psycopg.connect(self.database_url) as connection:
             rows = connection.execute(
                 "SELECT observation_id, room_id, device_id, state, confidence, "
-                "captured_at, model_version, sequence_no FROM sensor_observations" + where +
+                "captured_at, model_version, sequence_no, received_at FROM sensor_observations" + where +
                 " ORDER BY captured_at DESC, received_at DESC LIMIT %s", params
             ).fetchall()
         return [{"observation_id": row[0], "room_id": row[1], "device_id": row[2],
                  "state": row[3], "confidence": row[4], "captured_at": row[5].isoformat(),
-                 "model_version": row[6], "sequence_no": row[7]} for row in rows]
+                 "model_version": row[6], "sequence_no": row[7],
+                 "received_at": row[8].isoformat()} for row in rows]
 
     def device_statuses(self) -> list[dict]:
         with psycopg.connect(self.database_url) as connection:
             rows = connection.execute(
                 """SELECT DISTINCT ON (device_id) device_id, room_id, captured_at,
-                          state, model_version, sequence_no
+                          state, model_version, sequence_no, received_at
                    FROM sensor_observations
-                   ORDER BY device_id, captured_at DESC, received_at DESC"""
+                   ORDER BY device_id, received_at DESC, captured_at DESC"""
             ).fetchall()
+        now = datetime.now(timezone.utc)
         return [{"device_id": row[0], "room_id": row[1], "last_seen_at": row[2].isoformat(),
-                 "state": row[3], "model_version": row[4], "sequence_no": row[5]} for row in rows]
+                 "state": row[3], "model_version": row[4], "sequence_no": row[5],
+                 "last_received_at": row[6].isoformat(),
+                 "online": (now - row[6]).total_seconds() <= DEVICE_ONLINE_SECONDS}
+                for row in rows]
 
     def register_push_token(self, patient_id: str, token: str) -> None:
         with psycopg.connect(self.database_url) as connection:

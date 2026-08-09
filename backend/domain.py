@@ -14,6 +14,7 @@ ACTIVE_EVENT_STATUSES = {"OPEN", "ACKNOWLEDGED", "RESPONDING"}
 MAX_HISTORY_PER_ROOM = 500
 MAX_EVENTS = 2000
 MAX_OBSERVATIONS = 5000
+DEVICE_ONLINE_SECONDS = 30
 
 
 def now_iso() -> str:
@@ -57,6 +58,11 @@ class SensorObservation:
     captured_at: str
     model_version: str
     sequence_no: Optional[int] = None
+    received_at: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.received_at:
+            object.__setattr__(self, "received_at", now_iso())
 
 
 class MonitoringStore:
@@ -194,11 +200,15 @@ class MonitoringStore:
         with self._lock:
             latest: dict[str, SensorObservation] = {}
             for item in self._observations.values():
-                if item.device_id not in latest or item.captured_at > latest[item.device_id].captured_at:
+                if item.device_id not in latest or item.received_at > latest[item.device_id].received_at:
                     latest[item.device_id] = item
+            now = datetime.now(timezone.utc)
             return [{"device_id": item.device_id, "room_id": item.room_id,
-                     "last_seen_at": item.captured_at, "state": item.state,
-                     "model_version": item.model_version, "sequence_no": item.sequence_no}
+                     "last_seen_at": item.captured_at, "last_received_at": item.received_at,
+                     "online": (now - datetime.fromisoformat(item.received_at.replace("Z", "+00:00"))).total_seconds()
+                     <= DEVICE_ONLINE_SECONDS,
+                     "state": item.state, "model_version": item.model_version,
+                     "sequence_no": item.sequence_no}
                     for item in sorted(latest.values(), key=lambda value: value.device_id)]
 
     def _trim_events(self) -> None:

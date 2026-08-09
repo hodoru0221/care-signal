@@ -60,8 +60,11 @@ class ObservationPersistenceTests(unittest.TestCase):
         )
         self.assertEqual(observations.status_code, 200)
         self.assertEqual(observations.json()[0]["sequence_no"], 42)
+        self.assertIn("received_at", observations.json()[0])
         devices = self.client.get("/api/v1/devices/status", headers=headers)
         self.assertEqual(devices.json()[0]["device_id"], "sensor-7")
+        self.assertTrue(devices.json()[0]["online"])
+        self.assertIn("last_received_at", devices.json()[0])
 
     def test_legacy_minimal_payload_remains_supported(self):
         response = self.client.post(
