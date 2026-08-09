@@ -134,6 +134,20 @@ class ObservationPersistenceTests(unittest.TestCase):
         self.assertEqual(len(store.observations(limit=MAX_OBSERVATIONS + 10)), MAX_OBSERVATIONS)
         self.assertEqual(store.observations(limit=MAX_OBSERVATIONS + 10)[-1]["observation_id"], "obs-1")
 
+    def test_device_online_status_uses_server_receipt_time(self):
+        from backend.domain import SensorObservation
+
+        store = MonitoringStore()
+        store.record_observation(SensorObservation(
+            observation_id="obs-stale", room_id="room-01", device_id="device-stale",
+            state="IN_BED", confidence=0.9,
+            captured_at="2026-08-09T01:00:00+00:00", model_version="v1",
+            received_at="2026-08-09T01:00:01+00:00",
+        ))
+        status = store.device_statuses()[0]
+        self.assertFalse(status["online"])
+        self.assertEqual(status["last_received_at"], "2026-08-09T01:00:01+00:00")
+
 
 if __name__ == "__main__":
     unittest.main()
