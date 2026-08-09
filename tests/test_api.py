@@ -147,7 +147,7 @@ class ApiTests(unittest.TestCase):
                 headers=headers,
                 json={"room_id": "room-01", "state": "FALL", "confidence": 0.9},
             ).status_code,
-            400,
+            422,
         )
         self.assertEqual(
             self.client.post(
@@ -166,7 +166,6 @@ class ApiTests(unittest.TestCase):
             401,
         )
 
-    @unittest.expectedFailure
     def test_inference_rejects_room_outside_configured_ward(self):
         response = self.client.post(
             "/api/v1/inference",
