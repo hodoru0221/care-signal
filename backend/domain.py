@@ -4,9 +4,12 @@ from threading import Lock
 from typing import Dict, Optional
 from uuid import uuid4
 
+from backend.ward import WARD_ROOM_IDS
+
 
 VALID_STATES = {"EMPTY", "IN_BED", "OUT_OF_BED", "MOVEMENT_ANOMALY"}
 ACTIVE_EVENT_STATUSES = {"OPEN", "ACKNOWLEDGED", "RESPONDING"}
+MAX_HISTORY_PER_ROOM = 500
 
 
 def now_iso() -> str:
@@ -45,24 +48,35 @@ class MonitoringStore:
 
     def __init__(self) -> None:
         self._lock = Lock()
-        self._rooms: Dict[str, RoomStatus] = {"room-01": RoomStatus()}
+        self._rooms: Dict[str, RoomStatus] = {
+            room_id: RoomStatus(room_id=room_id) for room_id in WARD_ROOM_IDS
+        }
         self._events: Dict[str, Event] = {}
+        self._history: Dict[str, list[dict]] = {room_id: [] for room_id in WARD_ROOM_IDS}
 
     def export_snapshot(self) -> dict:
         with self._lock:
             return {
                 "rooms": {key: asdict(value) for key, value in self._rooms.items()},
                 "events": {key: asdict(value) for key, value in self._events.items()},
+                "history": self._history,
             }
 
     def import_snapshot(self, snapshot: dict) -> None:
         with self._lock:
             rooms = snapshot.get("rooms", {})
             events = snapshot.get("events", {})
+            history = snapshot.get("history", {})
             self._rooms = {key: RoomStatus(**value) for key, value in rooms.items()}
             self._events = {key: Event(**value) for key, value in events.items()}
-            if "room-01" not in self._rooms:
-                self._rooms["room-01"] = RoomStatus()
+            self._history = {
+                key: list(values)[-MAX_HISTORY_PER_ROOM:]
+                for key, values in history.items()
+            }
+            for room_id in WARD_ROOM_IDS:
+                if room_id not in self._rooms:
+                    self._rooms[room_id] = RoomStatus(room_id=room_id)
+                self._history.setdefault(room_id, [])
 
     @staticmethod
     def _risk_for(state: str) -> str:
@@ -84,6 +98,10 @@ class MonitoringStore:
             risk = self._risk_for(state)
             current = RoomStatus(room_id, state, confidence, risk, now_iso())
             self._rooms[room_id] = current
+            room_history = self._history.setdefault(room_id, [])
+            room_history.append(asdict(current))
+            if len(room_history) > MAX_HISTORY_PER_ROOM:
+                del room_history[:-MAX_HISTORY_PER_ROOM]
 
             changed_to_risk = risk != "NORMAL" and (
                 previous is None or previous.state != state
@@ -114,6 +132,17 @@ class MonitoringStore:
             if room_id not in self._rooms:
                 raise KeyError(room_id)
             return asdict(self._rooms[room_id])
+
+    def rooms(self) -> list[dict]:
+        with self._lock:
+            return [asdict(self._rooms[key]) for key in sorted(self._rooms)]
+
+    def room_history(self, room_id: str, limit: int = 50) -> list[dict]:
+        with self._lock:
+            if room_id not in self._rooms:
+                raise KeyError(room_id)
+            safe_limit = max(1, min(limit, 200))
+            return list(reversed(self._history.get(room_id, [])[-safe_limit:]))
 
     def events(self) -> list[dict]:
         with self._lock:

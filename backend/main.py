@@ -2,7 +2,7 @@ import os
 import secrets
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -14,6 +14,7 @@ from backend.persistence import (
     migrate_repository_if_empty,
 )
 from backend.notifications import send_push_notifications
+from backend.ward import WARD_ROOM_IDS, ward_map_payload
 
 
 app = FastAPI(title="WiFi Sensing Ward Monitor", version="0.2.0")
@@ -75,6 +76,7 @@ class PushTokenInput(BaseModel):
 
 
 class DemoStateInput(BaseModel):
+    room_id: str = "room-01"
     state: str
     confidence: float = Field(default=0.95, ge=0, le=1)
 
@@ -159,6 +161,25 @@ def room_status(room_id: str):
         raise HTTPException(404, "Room not found")
 
 
+@app.get("/api/v1/ward/map")
+def ward_map(authorization: str = Header(default="")):
+    require_staff(authorization)
+    return ward_map_payload(store)
+
+
+@app.get("/api/v1/rooms/{room_id}/history")
+def room_history(
+    room_id: str,
+    limit: int = Query(default=30, ge=1, le=200),
+    authorization: str = Header(default=""),
+):
+    require_staff(authorization)
+    try:
+        return store.room_history(room_id, limit)
+    except KeyError:
+        raise HTTPException(404, "Room not found")
+
+
 @app.post("/api/v1/inference")
 def receive_inference(payload: InferenceInput, x_device_key: str = Header(default="")):
     if not secrets.compare_digest(x_device_key, DEVICE_API_KEY):
@@ -235,8 +256,10 @@ def demo_state(payload: DemoStateInput, authorization: str = Header(default=""))
     require_staff(authorization)
     if not DEMO_MODE:
         raise HTTPException(404, "시연 모드가 비활성화되어 있습니다.")
+    if payload.room_id not in WARD_ROOM_IDS:
+        raise HTTPException(400, "병동 맵에 등록되지 않은 병실입니다.")
     try:
-        return apply_state("room-01", payload.state, payload.confidence)
+        return apply_state(payload.room_id, payload.state, payload.confidence)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 

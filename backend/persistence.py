@@ -126,6 +126,12 @@ class PersistentMonitoringStore:
     def room(self, room_id: str) -> dict:
         return self.memory.room(room_id)
 
+    def rooms(self) -> list[dict]:
+        return self.memory.rooms()
+
+    def room_history(self, room_id: str, limit: int = 50) -> list[dict]:
+        return self.memory.room_history(room_id, limit)
+
     def events(self) -> list[dict]:
         return self.memory.events()
 

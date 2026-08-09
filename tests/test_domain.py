@@ -2,6 +2,7 @@ import unittest
 
 from backend.domain import MonitoringStore
 from backend.notifications import build_push_messages
+from backend.ward import WARD_LAYOUT, ward_map_payload
 
 
 class MonitoringStoreTests(unittest.TestCase):
@@ -33,6 +34,28 @@ class MonitoringStoreTests(unittest.TestCase):
         restored.import_snapshot(snapshot)
         self.assertEqual(restored.room("room-01")["state"], "OUT_OF_BED")
         self.assertEqual(len(restored.events()), 1)
+
+    def test_room_history_is_persisted_in_snapshot(self):
+        source = MonitoringStore()
+        source.update_room("room-02", "IN_BED", 0.93)
+        source.update_room("room-02", "OUT_OF_BED", 0.87)
+        restored = MonitoringStore()
+        restored.import_snapshot(source.export_snapshot())
+        history = restored.room_history("room-02")
+        self.assertEqual([item["state"] for item in history], ["OUT_OF_BED", "IN_BED"])
+
+    def test_old_snapshot_gains_all_ward_rooms(self):
+        restored = MonitoringStore()
+        restored.import_snapshot({"rooms": {}, "events": {}})
+        self.assertEqual(len(restored.rooms()), len(WARD_LAYOUT["rooms"]))
+
+    def test_ward_map_combines_layout_and_live_status(self):
+        store = MonitoringStore()
+        store.update_room("room-03", "MOVEMENT_ANOMALY", 0.91)
+        payload = ward_map_payload(store)
+        room = next(item for item in payload["rooms"] if item["room_id"] == "room-03")
+        self.assertEqual(room["label"], "103호")
+        self.assertEqual(room["status"]["risk_level"], "CRITICAL")
 
     def test_push_message_hides_model_confidence(self):
         messages = build_push_messages(["ExponentPushToken[test]"], "OUT_OF_BED", "evt-1")
