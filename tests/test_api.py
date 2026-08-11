@@ -170,6 +170,37 @@ class ApiTests(unittest.TestCase):
         response = self.client.get(url, headers={"X-Device-Key": "dev-device-key"})
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["sound"])
+        self.assertEqual(
+            self.client.get(
+                "/api/v1/devices/uno-room-99/alert?room_id=room-99&location=room",
+                headers={"X-Device-Key": "dev-device-key"},
+            ).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.get(
+                "/api/v1/devices/uno-room-01/alert?room_id=room-01&location=unknown",
+                headers={"X-Device-Key": "dev-device-key"},
+            ).status_code,
+            422,
+        )
+
+    def test_event_api_rejects_progress_regression(self):
+        headers = self.staff_headers()
+        main.store.update_room("room-01", "OUT_OF_BED", 0.9)
+        event_id = main.store.events()[0]["id"]
+        responding = self.client.patch(
+            f"/api/v1/events/{event_id}",
+            headers=headers,
+            json={"status": "RESPONDING", "actor": "nurse-01"},
+        )
+        self.assertEqual(responding.status_code, 200)
+        regression = self.client.patch(
+            f"/api/v1/events/{event_id}",
+            headers=headers,
+            json={"status": "ACKNOWLEDGED", "actor": "nurse-01"},
+        )
+        self.assertEqual(regression.status_code, 400)
 
     def test_ward_map_contains_layout_and_each_live_room_status(self):
         response = self.client.get("/api/v1/ward/map", headers=self.staff_headers())

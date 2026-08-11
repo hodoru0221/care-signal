@@ -22,6 +22,22 @@ class MonitoringStoreTests(unittest.TestCase):
         store.update_event(event_id, "ACKNOWLEDGED", "nurse-01")
         self.assertFalse(store.device_alert("room-01", "nurse")["sound"])
 
+    def test_event_progress_cannot_move_backwards_or_reopen_after_completion(self):
+        store = MonitoringStore()
+        store.update_room("room-01", "MOVEMENT_ANOMALY", 0.88)
+        event_id = store.events()[0]["id"]
+        store.update_event(event_id, "RESPONDING", "nurse-01")
+        with self.assertRaises(ValueError):
+            store.update_event(event_id, "ACKNOWLEDGED", "nurse-01")
+        completed = store.update_event(event_id, "COMPLETED", "nurse-01")
+        self.assertEqual(completed["status"], "COMPLETED")
+        self.assertEqual(
+            store.update_event(event_id, "COMPLETED", "nurse-01")["completed_at"],
+            completed["completed_at"],
+        )
+        with self.assertRaises(ValueError):
+            store.update_event(event_id, "RESPONDING", "nurse-01")
+
     def test_invalid_confidence_is_rejected(self):
         store = MonitoringStore()
         with self.assertRaises(ValueError):

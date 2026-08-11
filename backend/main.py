@@ -315,11 +315,13 @@ def update_event(event_id: str, payload: EventUpdate, authorization: str = Heade
 def device_alert(
     device_id: str,
     room_id: str = "room-01",
-    location: str = "room",
+    location: Literal["room", "nurse", "station"] = "room",
     x_device_key: str = Header(default=""),
 ):
     if not secrets.compare_digest(x_device_key, DEVICE_API_KEY):
         raise HTTPException(401, "장치 인증에 실패했습니다.")
+    if room_id not in WARD_ROOM_IDS:
+        raise HTTPException(400, "병동 맵에 등록되지 않은 병실입니다.")
     return {"device_id": device_id, **store.device_alert(room_id, location)}
 
 

@@ -11,6 +11,13 @@ from backend.ward import WARD_ROOM_IDS
 
 VALID_STATES = {"EMPTY", "IN_BED", "OUT_OF_BED", "MOVEMENT_ANOMALY"}
 ACTIVE_EVENT_STATUSES = {"OPEN", "ACKNOWLEDGED", "RESPONDING"}
+EVENT_TRANSITIONS = {
+    "OPEN": {"ACKNOWLEDGED", "RESPONDING", "COMPLETED", "FALSE_ALARM"},
+    "ACKNOWLEDGED": {"RESPONDING", "COMPLETED", "FALSE_ALARM"},
+    "RESPONDING": {"COMPLETED", "FALSE_ALARM"},
+    "COMPLETED": set(),
+    "FALSE_ALARM": set(),
+}
 MAX_HISTORY_PER_ROOM = 500
 MAX_EVENTS = 2000
 MAX_OBSERVATIONS = 5000
@@ -327,13 +334,18 @@ class MonitoringStore:
             ]
 
     def update_event(self, event_id: str, status: str, actor: str) -> dict:
-        allowed = {"ACKNOWLEDGED", "RESPONDING", "COMPLETED", "FALSE_ALARM"}
-        if status not in allowed:
+        if status not in {"ACKNOWLEDGED", "RESPONDING", "COMPLETED", "FALSE_ALARM"}:
             raise ValueError(f"Invalid event status: {status}")
         with self._lock:
             if event_id not in self._events:
                 raise KeyError(event_id)
             event = self._events[event_id]
+            if status == event.status:
+                return asdict(event)
+            if status not in EVENT_TRANSITIONS[event.status]:
+                raise ValueError(
+                    f"Invalid event transition: {event.status} -> {status}"
+                )
             event.status = status
             event.actor = actor
             if status == "ACKNOWLEDGED" and event.acknowledged_at is None:

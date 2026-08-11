@@ -137,7 +137,7 @@ ALLOWED_ORIGINS=https://hospital.example.com,https://guardian.example.com
 
 저장소 루트의 `render.yaml`을 Blueprint로 연결하면 Singapore 리전의 Docker 웹 서비스가 생성된다. 최초 생성 화면에서 `GUARDIAN_CONNECTION_CODE`, `STAFF_ACCESS_CODE`, `DEVICE_API_KEY` 세 값을 입력한다. Render가 제공하는 `onrender.com` 주소는 HTTPS가 적용된 공개 접속 주소다.
 
-Render Blueprint는 `care-signal-db` PostgreSQL을 함께 만들고 `DATABASE_URL`을 서버에 자동 연결한다. 환자 상태와 사건 기록은 서버 재시작 후에도 복원된다. 로그인 세션은 아직 서버 메모리에 있으므로 재시작 시 다시 로그인해야 한다.
+Render Blueprint는 `care-signal-db` PostgreSQL을 함께 만들고 `DATABASE_URL`을 서버에 자동 연결한다. 환자 상태, 사건 기록과 로그인 세션은 서버 재시작 후에도 복원된다. 세션 토큰 원문은 저장하지 않고 SHA-256 해시와 만료 시각만 저장한다.
 
 ## 병원 수집 PC 게이트웨이
 
