@@ -38,6 +38,19 @@ class MonitoringStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             store.update_event(event_id, "RESPONDING", "nurse-01")
 
+    def test_only_completed_events_can_be_deleted(self):
+        store = MonitoringStore()
+        store.update_room("room-01", "OUT_OF_BED", 0.9)
+        active_id = store.events()[0]["id"]
+        with self.assertRaises(ValueError):
+            store.delete_completed_events([active_id])
+        store.update_event(active_id, "COMPLETED", "nurse-01")
+        result = store.delete_completed_events([active_id])
+        self.assertEqual(result["deleted_count"], 1)
+        self.assertEqual(store.events(), [])
+        with self.assertRaises(KeyError):
+            store.delete_completed_events([active_id])
+
     def test_invalid_confidence_is_rejected(self):
         store = MonitoringStore()
         with self.assertRaises(ValueError):

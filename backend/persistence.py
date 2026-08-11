@@ -396,6 +396,9 @@ class PersistentMonitoringStore:
     def events(self) -> list[dict]:
         return self._read("events")
 
+    def delete_completed_events(self, event_ids: list[str]) -> dict:
+        return self._mutate("delete_completed_events", event_ids)
+
     def device_alert(self, room_id: str, location: str) -> dict:
         return self._read("device_alert", room_id, location)
 

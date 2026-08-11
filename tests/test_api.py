@@ -202,6 +202,39 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(regression.status_code, 400)
 
+    def test_demo_cleanup_deletes_only_selected_completed_events(self):
+        headers = self.staff_headers()
+        main.store.update_room("room-01", "OUT_OF_BED", 0.9)
+        first_id = main.store.events()[0]["id"]
+        main.store.update_event(first_id, "COMPLETED", "nurse-01")
+        main.store.update_room("room-01", "IN_BED", 0.99)
+        main.store.update_room("room-01", "MOVEMENT_ANOMALY", 0.91)
+        active_id = next(
+            event["id"] for event in main.store.events() if event["status"] == "OPEN"
+        )
+
+        deleted = self.client.post(
+            "/api/v1/demo/events/cleanup",
+            headers=headers,
+            json={"event_ids": [first_id], "confirmation": "DELETE"},
+        )
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(deleted.json()["deleted_event_ids"], [first_id])
+        self.assertEqual([event["id"] for event in main.store.events()], [active_id])
+
+        active = self.client.post(
+            "/api/v1/demo/events/cleanup",
+            headers=headers,
+            json={"event_ids": [active_id], "confirmation": "DELETE"},
+        )
+        self.assertEqual(active.status_code, 400)
+        wrong_confirmation = self.client.post(
+            "/api/v1/demo/events/cleanup",
+            headers=headers,
+            json={"event_ids": [active_id], "confirmation": "WRONG"},
+        )
+        self.assertEqual(wrong_confirmation.status_code, 422)
+
     def test_ward_map_contains_layout_and_each_live_room_status(self):
         response = self.client.get("/api/v1/ward/map", headers=self.staff_headers())
         self.assertEqual(response.status_code, 200)

@@ -119,6 +119,21 @@ class DemoStateInput(BaseModel):
     confidence: float = Field(default=0.95, ge=0, le=1)
 
 
+class DemoEventCleanupInput(BaseModel):
+    event_ids: list[str] = Field(min_length=1, max_length=100)
+    confirmation: Literal["DELETE"]
+
+    @field_validator("event_ids")
+    @classmethod
+    def event_ids_must_be_unique_and_nonempty(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value]
+        if any(not item or len(item) > 128 for item in cleaned):
+            raise ValueError("event_ids must contain valid identifiers")
+        if len(set(cleaned)) != len(cleaned):
+            raise ValueError("event_ids must be unique")
+        return cleaned
+
+
 def register_push_token(token: str) -> None:
     if not (token.startswith("ExponentPushToken[") or token.startswith("ExpoPushToken[")):
         raise HTTPException(400, "올바른 Expo Push Token이 아닙니다.")
@@ -401,6 +416,22 @@ def demo_state(payload: DemoStateInput, authorization: str = Header(default=""))
             captured_at=now_iso(),
             model_version="demo-panel",
         ))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/v1/demo/events/cleanup")
+def demo_event_cleanup(
+    payload: DemoEventCleanupInput,
+    authorization: str = Header(default=""),
+):
+    require_staff(authorization)
+    if not DEMO_MODE:
+        raise HTTPException(404, "시연 모드가 비활성화되어 있습니다.")
+    try:
+        return store.delete_completed_events(payload.event_ids)
+    except KeyError:
+        raise HTTPException(404, "삭제할 사건을 찾을 수 없습니다.")
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
