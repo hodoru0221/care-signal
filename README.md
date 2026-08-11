@@ -82,6 +82,8 @@ python -m unittest discover -s tests -v
 
 인증 경계, 병동 맵 응답, 다중 병실 상태·사건 분리, 병실 이력 순서와 제한, 구형 스냅샷 보완, 잘못된 상태·신뢰도·병실·인증 입력을 검증한다. 알려진 결함을 재현하는 테스트는 `expected failure`로 별도 표시된다.
 
+GitHub PR과 `main` 푸시에서는 `.github/workflows/ci.yml`이 Python 테스트·컴파일, 직원/보호자 웹 스크립트 문법, 모바일 TypeScript를 자동 검사한다. 실제 장비 테스트 전후의 전체 확인 항목은 `SOFTWARE_RELEASE_CHECKLIST.md`를 따른다.
+
 ## 보호자 네이티브 앱
 
 `mobile` 폴더에는 Android와 iOS 공용 Expo 앱이 있다. Node.js 설치 후 다음과 같이 실행한다.
