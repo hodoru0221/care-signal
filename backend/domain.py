@@ -258,6 +258,25 @@ class MonitoringStore:
             ordered = sorted(self._events.values(), key=lambda x: x.created_at, reverse=True)
             return [asdict(event) for event in ordered]
 
+    def delete_completed_events(self, event_ids: list[str]) -> dict:
+        requested = set(event_ids)
+        if not requested:
+            raise ValueError("at least one event_id is required")
+        with self._lock:
+            missing = requested.difference(self._events)
+            if missing:
+                raise KeyError(sorted(missing)[0])
+            active = [
+                event_id
+                for event_id in requested
+                if self._events[event_id].status in ACTIVE_EVENT_STATUSES
+            ]
+            if active:
+                raise ValueError("active events cannot be deleted")
+            for event_id in requested:
+                del self._events[event_id]
+            return {"deleted_event_ids": sorted(requested), "deleted_count": len(requested)}
+
     def guardian_view(self, room_id: str) -> dict:
         """Return a non-clinical, privacy-minimized view for a linked guardian."""
         with self._lock:
