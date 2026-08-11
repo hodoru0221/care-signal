@@ -3,7 +3,6 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 
-
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldPlaySound: true,
@@ -12,7 +11,6 @@ Notifications.setNotificationHandler({
     shouldShowList: true,
   }),
 });
-
 
 export async function getGuardianPushToken(): Promise<string | null> {
   if (!Device.isDevice) return null;
@@ -25,11 +23,18 @@ export async function getGuardianPushToken(): Promise<string | null> {
     });
   }
   const current = await Notifications.getPermissionsAsync();
-  const status = current.status === "granted"
-    ? current.status
-    : (await Notifications.requestPermissionsAsync()).status;
+  const status = current.status === "granted" ? current.status : (await Notifications.requestPermissionsAsync()).status;
   if (status !== "granted") return null;
   const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
   if (!projectId) return null;
   return (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+}
+
+export function subscribeToGuardianNotifications(onUpdate: () => void): () => void {
+  const received = Notifications.addNotificationReceivedListener(() => onUpdate());
+  const opened = Notifications.addNotificationResponseReceivedListener(() => onUpdate());
+  return () => {
+    received.remove();
+    opened.remove();
+  };
 }

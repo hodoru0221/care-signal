@@ -26,8 +26,9 @@
 [분류 모델]
        │ 상태 + 신뢰도
        ▼
-[FastAPI 서버 + SQLite]
-       ├── WebSocket ──> [병동 웹 대시보드]
+[FastAPI 서버 + 메모리/PostgreSQL JSONB 스냅샷]
+       ├── HTTP 폴링 ──> [병동 웹 대시보드]
+       ├── HTTP API  ──> [보호자 웹·Expo 앱]
        └── HTTP API  ──> [UNO R4 WiFi + 스피커]
 ```
 
@@ -100,30 +101,38 @@ LM386 모듈은 증폭기이므로 실제 음원 입력 방식과 전원 전압,
 ### 4.1 기술 선택
 
 - 백엔드: Python FastAPI
-- 실시간 통신: WebSocket
-- 데이터베이스: SQLite
-- 프론트엔드: React + Vite
-- 차트: Recharts
-- 모델 연결: Python 함수 호출로 시작, 필요할 때 별도 프로세스로 분리
+- 화면 갱신: 브라우저의 주기적 HTTP API 조회
+- 데이터 저장: 로컬은 메모리, 배포는 PostgreSQL JSONB 스냅샷
+- 프론트엔드: 의존성 없는 HTML/CSS/JavaScript와 Expo 앱
+- 모델 연결: 병원 PC 게이트웨이가 장치 키로 추론 API 호출
 - CSI 원본 저장: CSV 또는 Parquet
 
-FastAPI를 선택하면 모델 코드와 같은 Python 환경에서 연동할 수 있다. SQLite는 별도 DB 서버 없이 시연하기 쉽다.
+FastAPI는 모델·게이트웨이와 같은 Python 생태계에서 연동한다. 데이터베이스 URL이 없으면 메모리 저장소를 사용하고, `NEON_DATABASE_URL` 또는 `DATABASE_URL`이 있으면 상태·사건·이력을 하나의 원자적 JSONB 스냅샷으로 저장한다. 로그인 세션은 데이터베이스가 아니라 서버 메모리에 유지된다.
 
 ### 4.2 백엔드 모듈
 
 ```text
 backend/
-  app/
-    main.py              API 시작점
-    collector.py         Serial 데이터 수집
-    preprocessing.py     필터링 및 window 생성
-    inference.py         모델 호출
-    event_engine.py      지속시간·위험도·중복 알림 판단
-    database.py          상태와 사건 기록
-    schemas.py           공통 데이터 형식
+  main.py                API, 인증, 정적 웹 제공
+  domain.py              병실 상태, 사건, 이력과 스냅샷
+  ward.py                정적 병동 배치와 상태 결합
+  persistence.py         PostgreSQL JSONB 스냅샷 저장
+  notifications.py       보호자 Expo 푸시 메시지
+  simulator.py           시연용 상태 입력
+gateway/
+  uploader.py            추론 결과 전송과 실패 큐 재전송
+web/
+  index.html             직원 병동 맵 대시보드
+  guardian.html          보호자 모바일 웹
 ```
 
-### 4.3 프론트엔드 화면
+### 4.3 병동 맵 데이터 구조
+
+`backend/ward.py`의 정적 `WARD_LAYOUT`은 병동 `id`·`name`, `rooms[]`, `stations[]`를 정의한다. 병실 항목은 `room_id`, 표시명, 침상명과 CSS 그리드 좌표를 가진다. `GET /api/v1/ward/map`은 각 정적 병실에 `MonitoringStore.rooms()`의 실시간 `status`를 결합한다.
+
+모니터링 스냅샷은 `rooms`(병실별 최신 상태), `events`(사건 ID별 대응 상태), `history`(병실 ID별 감지 기록) 세 객체로 구성된다. 구형 스냅샷에 `history`나 새 병실이 없으면 불러올 때 빈 이력과 기본 병실 상태를 보완한다. 이력은 병실마다 최대 500건을 저장하고 API에서는 최신순으로 최대 200건까지 반환한다.
+
+### 4.4 프론트엔드 화면
 
 한 화면에서 다음 정보를 보여준다.
 
@@ -142,30 +151,30 @@ backend/
 1. 수신기가 CSI 패킷을 PC로 보낸다.
 2. 수집기가 일정 길이의 window를 만든다.
 3. 모델이 상태와 신뢰도를 반환한다.
-4. 이벤트 엔진이 순간적인 오분류를 제거한다.
-5. 서버가 최신 상태를 저장하고 웹에 전송한다.
+4. 서버가 상태를 즉시 저장하고 위험 상태로 바뀐 경우 활성 중복 사건이 없을 때 사건을 만든다.
+5. 웹은 HTTP API를 다시 조회해 최신 상태를 표시한다.
 
 ### 5.2 이상상황 처리
 
 1. 모델이 `OUT_OF_BED` 또는 `MOVEMENT_ANOMALY`를 반환한다.
-2. 이벤트 엔진이 상태 지속시간과 신뢰도를 검사한다.
-3. 조건을 만족하면 사건을 생성한다.
+2. 서버가 상태를 `WARNING` 또는 `CRITICAL`로 매핑한다.
+3. 같은 병실·같은 유형의 활성 사건이 없으면 사건을 생성한다.
 4. 웹 대시보드에 경보가 표시된다.
 5. UNO R4가 서버에서 경보를 읽고 안내음을 출력한다.
 6. 담당자가 웹에서 `확인`을 누르면 경보음이 중지된다.
 7. `처리 완료` 또는 `오탐` 결과와 대응 시간이 저장된다.
 
-### 5.3 초기 경보 규칙
+### 5.3 현재 프로토타입 경보 규칙
 
 | 조건 | 등급 | 동작 |
 |---|---|---|
-| `OUT_OF_BED`가 3초 이상 지속 | 주의 | 웹 노란색 표시, 안내음 1회 |
-| 급격한 움직임 후 5초 이상 정적 | 긴급 의심 | 웹 빨간색 표시, 반복 경보 |
-| CSI 입력이 5초 이상 없음 | 장치 오류 | 환자 경보와 구분하여 장치 점검 표시 |
-| 담당자가 확인 | 처리 중 | 스피커 중지, 대응 시간 측정 |
-| 30초간 미확인 | 재알림 | 웹 강조 및 상위 담당자 전달 대상으로 표시 |
+| `OUT_OF_BED` 입력 | 주의 | 웹 주황색, 병실 장치는 `GENTLE_ONCE` |
+| `MOVEMENT_ANOMALY` 입력 | 긴급 의심 | 웹 빨간색, 장치는 `URGENT_REPEAT` |
+| 담당자가 `ACKNOWLEDGED` 처리 | 확인 | 장치 경보음 중지, 확인 시각 저장 |
+| `RESPONDING` 처리 | 이동 중 | 보호자 화면에 직원 확인 중 표시 |
+| `COMPLETED` 또는 `FALSE_ALARM` 처리 | 종료 | 완료 시각 저장, 활성 사건에서 제외 |
 
-수치는 데이터 수집 후 검증하여 조정한다.
+마지막 관측 수신 후 30초가 지나면 장치를 오프라인으로 표시하는 입력 끊김 감지는 구현되어 있다. 지속시간 필터와 30초 재알림은 실제 모델 정확도·오탐률 측정 후 값을 확정해 적용할 향후 규칙이다.
 
 ## 6. API 초안
 
@@ -199,13 +208,25 @@ backend/
 {"status":"ACKNOWLEDGED","actor":"nurse-01"}
 ```
 
-### 웹 실시간 연결
+### 병동 맵과 이력
 
-`WS /ws/rooms/{room_id}`
+- `GET /api/v1/ward/map`: 직원 인증 후 정적 배치와 전체 병실의 현재 상태 반환
+- `GET /api/v1/rooms/{room_id}/history?limit=30`: 직원 인증 후 병실 감지 이력을 최신순 반환
 
-메시지 종류는 `room_status`, `event_created`, `event_updated`, `device_status`로 제한한다.
+현재 웹 화면은 WebSocket이 아니라 이 HTTP API들을 주기적으로 조회한다.
 
-## 7. 개발 단계
+## 7. 자동화 QA
+
+테스트 전용 의존성은 `requirements-test.txt`에 정의한다.
+
+```powershell
+pip install -r requirements-test.txt
+python -m unittest discover -s tests -v
+```
+
+`tests/test_api.py`는 직원·보호자 인증 분리, 병동 맵 계약, 여러 병실의 독립 상태와 사건, 이력 API, 요청 검증을 HTTP 수준에서 확인한다. `tests/test_domain.py`는 사건 중복 방지, 경보 중지, 스냅샷 복원, 구형 스냅샷 보완, 병실별 이력 격리를 확인한다.
+
+## 8. 개발 단계
 
 ### 1단계: 하드웨어 없이 통합
 
@@ -238,7 +259,7 @@ backend/
 - 장치 연결 끊김 시나리오
 - 탐지 시간, 오탐, 알림 확인 시간 측정
 
-## 8. 역할 간 전달 규격
+## 9. 역할 간 전달 규격
 
 - 데이터팀 → 모델팀: 원본 CSI 파일과 실험 메타데이터
 - 모델팀 → 웹팀: `state`, `confidence`, `timestamp` 형식의 결과
@@ -247,7 +268,7 @@ backend/
 
 서로의 내부 코드를 직접 참조하지 않고 위 데이터 형식만 지키도록 한다.
 
-## 9. 1차 완료 기준
+## 10. 1차 완료 기준
 
 - CSI 데이터가 PC에 연속 저장된다.
 - 네 상태 중 하나가 1초 이내 주기로 웹에 갱신된다.

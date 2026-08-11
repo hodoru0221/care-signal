@@ -1,41 +1,118 @@
 import { StatusBar } from "expo-status-bar";
 import * as SecureStore from "expo-secure-store";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, AppState, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { getHistory, getPatient, GuardianEvent, GuardianStatus, login, savePushToken } from "./src/api";
-import { getGuardianPushToken } from "./src/notifications";
+import { ApiError, DisplayState, encodeGuardianCache, EventProgress, getHistory, getPatient, GuardianEvent, GuardianStatus, login, logout, normalizeAndValidateBaseUrl, parseGuardianCache, savePushToken } from "./src/api";
+import { getGuardianPushToken, subscribeToGuardianNotifications } from "./src/notifications";
 
 const TOKEN_KEY = "guardian_token";
 const SERVER_KEY = "server_url";
-const PUBLIC_API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, "") ?? "";
-const stateLabels: Record<string, string> = { STABLE: "안정", AWAY: "자리 비움", WARD_NOTIFIED: "병동 확인 요청", STAFF_CHECKING: "담당자 확인 중", CHECK_COMPLETED: "확인 완료" };
-const progressLabels: Record<string, string> = { OPEN: "병동에 확인 요청이 전달되었습니다.", ACKNOWLEDGED: "담당자가 알림을 확인했습니다.", RESPONDING: "담당자가 환자 상태를 확인하고 있습니다.", COMPLETED: "상태 확인이 완료되었습니다.", FALSE_ALARM: "확인 결과 특이사항이 없었습니다." };
+const CACHE_KEY = "guardian_last_snapshot";
+const PUBLIC_API_URL = process.env.EXPO_PUBLIC_API_URL?.trim() ?? "";
+const DEFAULT_DEV_URL = "http://192.168.0.10:8000";
+const POLL_INTERVAL_MS = 15_000;
+const MAX_RETRY_INTERVAL_MS = 60_000;
+const stateLabels: Record<DisplayState, string> = { STABLE: "안정", AWAY: "자리 비움", WARD_NOTIFIED: "병동 확인 요청", STAFF_CHECKING: "담당자 확인 중", CHECK_COMPLETED: "확인 완료" };
+const progressLabels: Record<EventProgress, string> = { OPEN: "병동에 확인 요청이 전달되었습니다.", ACKNOWLEDGED: "담당자가 알림을 확인했습니다.", RESPONDING: "담당자가 환자 상태를 확인하고 있습니다.", COMPLETED: "상태 확인이 완료되었습니다.", FALSE_ALARM: "확인 결과 특이사항이 없었습니다." };
+type ConnectionState = "online" | "offline" | "server-error";
+
+function safeDate(value: string, includeDate = false): string { const date = new Date(value); if (Number.isNaN(date.getTime())) return "시간 정보 없음"; return includeDate ? date.toLocaleString() : date.toLocaleTimeString(); }
 
 export default function App() {
   const [token, setToken] = useState<string | null>(null);
-  const [baseUrl, setBaseUrl] = useState(PUBLIC_API_URL || "http://192.168.0.10:8000");
-  const [code, setCode] = useState("CARE-101");
+  const [baseUrl, setBaseUrl] = useState(PUBLIC_API_URL || DEFAULT_DEV_URL);
+  const [code, setCode] = useState("");
   const [status, setStatus] = useState<GuardianStatus | null>(null);
   const [history, setHistory] = useState<GuardianEvent[]>([]);
   const [tab, setTab] = useState<"status" | "history" | "settings">("status");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [connection, setConnection] = useState<ConnectionState>("online");
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const refreshInFlight = useRef(false);
 
-  useEffect(() => { (async () => { const [savedToken, savedUrl] = await Promise.all([SecureStore.getItemAsync(TOKEN_KEY), SecureStore.getItemAsync(SERVER_KEY)]); if (!PUBLIC_API_URL && savedUrl) setBaseUrl(savedUrl); setToken(savedToken); setLoading(false); })(); }, []);
-  useEffect(() => { if (!token) return; const refresh = async () => { try { const [patient, events] = await Promise.all([getPatient(baseUrl, token), getHistory(baseUrl, token)]); setStatus(patient); setHistory(events); setError(""); } catch (e) { if ((e as Error).message === "SESSION_EXPIRED") await signOut(); else setError((e as Error).message); } }; refresh(); const timer = setInterval(refresh, 5000); const listener = AppState.addEventListener("change", state => state === "active" && refresh()); return () => { clearInterval(timer); listener.remove(); }; }, [token, baseUrl]);
-  useEffect(() => { if (!token) return; getGuardianPushToken().then(pushToken => { if (pushToken) return savePushToken(baseUrl, token, pushToken); }).catch(() => undefined); }, [token, baseUrl]);
+  const signOut = useCallback(async (message = "", revokeRemote = true) => {
+    if (revokeRemote && token) void logout(baseUrl, token).catch(() => undefined);
+    await Promise.all([
+      SecureStore.deleteItemAsync(TOKEN_KEY),
+      SecureStore.deleteItemAsync(CACHE_KEY),
+    ]);
+    setToken(null); setStatus(null); setHistory([]); setLastSyncedAt(null); setError(message);
+  }, [baseUrl, token]);
+  const refresh = useCallback(async (): Promise<boolean> => {
+    if (!token) return false;
+    if (refreshInFlight.current) return true;
+    refreshInFlight.current = true; setRefreshing(true);
+    try {
+      const [patientResult, historyResult] = await Promise.allSettled([getPatient(baseUrl, token), getHistory(baseUrl, token)]);
+      const rejected = [patientResult, historyResult].find(result => result.status === "rejected");
+      if (rejected?.status === "rejected" && rejected.reason instanceof ApiError && rejected.reason.kind === "SESSION_EXPIRED") { await signOut("보호자 연결이 만료되었습니다. 연결 코드를 다시 입력해 주세요.", false); return false; }
+      if (patientResult.status === "fulfilled") setStatus(patientResult.value);
+      if (historyResult.status === "fulfilled") setHistory(historyResult.value);
+      if (patientResult.status === "fulfilled" || historyResult.status === "fulfilled") {
+        const syncedAt = new Date();
+        setLastSyncedAt(syncedAt);
+        if (patientResult.status === "fulfilled" && historyResult.status === "fulfilled") {
+          void SecureStore.setItemAsync(
+            CACHE_KEY,
+            encodeGuardianCache(patientResult.value, historyResult.value, syncedAt),
+          ).catch(() => undefined);
+        }
+      }
+      if (rejected?.status === "rejected") throw rejected.reason;
+      setConnection("online"); setError("");
+      return true;
+    } catch (caught) {
+      const apiError = caught instanceof ApiError ? caught : new ApiError("SERVER", "정보를 새로 불러오지 못했습니다.");
+      setConnection(apiError.kind === "OFFLINE" || apiError.kind === "TIMEOUT" ? "offline" : "server-error"); setError(apiError.message);
+      return false;
+    } finally { refreshInFlight.current = false; setRefreshing(false); }
+  }, [baseUrl, signOut, token]);
 
-  async function connect() { setLoading(true); setError(""); try { const result = await login(baseUrl, code); await Promise.all([SecureStore.setItemAsync(TOKEN_KEY, result.access_token), SecureStore.setItemAsync(SERVER_KEY, baseUrl)]); setToken(result.access_token); } catch (e) { setError((e as Error).message); } finally { setLoading(false); } }
-  async function signOut() { await SecureStore.deleteItemAsync(TOKEN_KEY); setToken(null); setStatus(null); setHistory([]); }
+  useEffect(() => { void (async () => { try { const [savedToken, savedUrl, savedCache] = await Promise.all([SecureStore.getItemAsync(TOKEN_KEY), SecureStore.getItemAsync(SERVER_KEY), SecureStore.getItemAsync(CACHE_KEY)]); const configuredUrl = PUBLIC_API_URL || savedUrl || DEFAULT_DEV_URL; const cached = parseGuardianCache(savedCache); setBaseUrl(normalizeAndValidateBaseUrl(configuredUrl)); setToken(savedToken); if (savedToken && cached) { setStatus(cached.status); setHistory(cached.history); setLastSyncedAt(new Date(cached.cached_at)); } } catch (caught) { setError(caught instanceof Error ? caught.message : "앱 설정을 불러오지 못했습니다."); } finally { setLoading(false); } })(); }, []);
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    let failures = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = (delay: number) => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void run(), delay);
+    };
+    const run = async () => {
+      if (cancelled) return;
+      if (AppState.currentState !== "active") { schedule(POLL_INTERVAL_MS); return; }
+      const success = await refresh();
+      failures = success ? 0 : Math.min(failures + 1, 4);
+      const delay = success ? POLL_INTERVAL_MS : Math.min(5_000 * 2 ** (failures - 1), MAX_RETRY_INTERVAL_MS);
+      if (!cancelled) schedule(delay);
+    };
+    void run();
+    const appStateListener = AppState.addEventListener("change", state => {
+      if (state === "active") { if (timer) clearTimeout(timer); void run(); }
+    });
+    const unsubscribeNotifications = subscribeToGuardianNotifications(() => void refresh());
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      appStateListener.remove();
+      unsubscribeNotifications();
+    };
+  }, [refresh, token]);
+  useEffect(() => { if (!token) return; void (async () => { try { const pushToken = await getGuardianPushToken(); if (pushToken) await savePushToken(baseUrl, token, pushToken); } catch { /* Push registration is best-effort and isolated from the session. */ } })(); }, [baseUrl, token]);
 
-  if (loading) return <SafeAreaView style={styles.center}><ActivityIndicator color="#3157d5" size="large" /></SafeAreaView>;
-  if (!token) return <SafeAreaView style={styles.page}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.login}><Text style={styles.brand}>CARE SIGNAL</Text><Text style={styles.title}>보호자 안심 알림</Text><View style={styles.card}><Text style={styles.heading}>환자 연결</Text><Text style={styles.muted}>병동에서 받은 연결 코드를 입력해 주세요.</Text>{!PUBLIC_API_URL && <><Text style={styles.label}>개발 서버 주소</Text><TextInput style={styles.input} value={baseUrl} onChangeText={setBaseUrl} autoCapitalize="none" keyboardType="url" /></>}<Text style={styles.label}>연결 코드</Text><TextInput style={styles.input} value={code} onChangeText={setCode} autoCapitalize="characters" />{!!error && <Text style={styles.error}>{error}</Text>}<Pressable style={styles.button} onPress={connect}><Text style={styles.buttonText}>연결하기</Text></Pressable></View></ScrollView></SafeAreaView>;
+  async function connect() { setLoading(true); setError(""); try { const validatedUrl = normalizeAndValidateBaseUrl(baseUrl); if (!code.trim()) throw new ApiError("CONFIG", "연결 코드를 입력해 주세요."); const result = await login(validatedUrl, code); await Promise.all([SecureStore.setItemAsync(TOKEN_KEY, result.access_token), SecureStore.setItemAsync(SERVER_KEY, validatedUrl)]); setBaseUrl(validatedUrl); setCode(""); setConnection("online"); setLastSyncedAt(null); setToken(result.access_token); } catch (caught) { setError(caught instanceof Error ? caught.message : "연결하지 못했습니다."); } finally { setLoading(false); } }
 
-  return <SafeAreaView style={styles.page}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.content}><Text style={styles.brand}>CARE SIGNAL</Text>{tab === "status" && <><Text style={styles.title}>환자 상태</Text>{status ? <View style={styles.card}><Text style={styles.muted}>{status.patient.room_label}</Text><Text style={styles.patient}>{status.patient.display_name} 님</Text><View style={[styles.badge, badgeStyle(status.display_state)]}><Text style={styles.badgeText}>{stateLabels[status.display_state]}</Text></View><Text style={styles.message}>{status.message}</Text><InfoRow label="병실 센서" value={status.sensor_online ? "정상" : "연결 확인 필요"} /><InfoRow label="마지막 갱신" value={new Date(status.updated_at).toLocaleTimeString()} /></View> : <ActivityIndicator />}{status?.event && <View style={styles.card}><Text style={styles.heading}>병동 대응 현황</Text><Text style={styles.messageSmall}>{progressLabels[status.event.progress]}</Text></View>}</>}{tab === "history" && <><Text style={styles.title}>최근 알림</Text>{history.length ? history.map(item => <View style={styles.card} key={item.id}><Text style={styles.heading}>{item.summary}</Text><Text style={styles.muted}>{new Date(item.created_at).toLocaleString()}</Text><Text style={styles.progress}>{progressLabels[item.progress] ?? item.progress}</Text></View>) : <View style={styles.card}><Text style={styles.muted}>최근 알림이 없습니다.</Text></View>}</>}{tab === "settings" && <><Text style={styles.title}>설정</Text><View style={styles.card}><InfoRow label="서버" value={baseUrl} /><Pressable style={styles.outlineButton} onPress={signOut}><Text style={styles.outlineText}>환자 연결 해제</Text></Pressable></View></>}{!!error && <Text style={styles.error}>{error}</Text>}</ScrollView><View style={styles.nav}><Nav label="현재 상태" active={tab === "status"} onPress={() => setTab("status")} /><Nav label="알림 내역" active={tab === "history"} onPress={() => setTab("history")} /><Nav label="설정" active={tab === "settings"} onPress={() => setTab("settings")} /></View></SafeAreaView>;
+  if (loading) return <SafeAreaView style={styles.center}><ActivityIndicator color="#3157d5" size="large" /><Text style={styles.loadingText}>안전하게 연결하는 중…</Text></SafeAreaView>;
+  if (!token) return <SafeAreaView style={styles.page}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.login} keyboardShouldPersistTaps="handled"><Text style={styles.brand}>CARE SIGNAL</Text><Text style={styles.title}>보호자 안심 알림</Text><View style={styles.card}><Text style={styles.heading}>환자 연결</Text><Text style={styles.muted}>병동에서 받은 연결 코드를 입력해 주세요.</Text>{!PUBLIC_API_URL && <><Text style={styles.label}>개발 서버 주소</Text><TextInput style={styles.input} value={baseUrl} onChangeText={setBaseUrl} autoCapitalize="none" autoCorrect={false} keyboardType="url" /></>}<Text style={styles.label}>연결 코드</Text><TextInput style={styles.input} value={code} onChangeText={setCode} autoCapitalize="characters" autoCorrect={false} secureTextEntry accessibilityLabel="보호자 연결 코드" />{!!error && <Text style={styles.error} accessibilityRole="alert">{error}</Text>}<Pressable style={styles.button} onPress={() => void connect()}><Text style={styles.buttonText}>연결하기</Text></Pressable></View></ScrollView></SafeAreaView>;
+
+  return <SafeAreaView style={styles.page}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.content}><Text style={styles.brand}>CARE SIGNAL</Text>{connection !== "online" && <View style={styles.connectionBanner}><Text style={styles.connectionTitle}>{connection === "offline" ? "오프라인 또는 서버 연결 실패" : "서버 응답 오류"}</Text><Text style={styles.connectionText}>{lastSyncedAt ? `${safeDate(lastSyncedAt.toISOString())}에 받은 정보를 표시하고 있습니다.` : "연결이 복구되면 자동으로 다시 시도합니다."}</Text><Pressable onPress={() => void refresh()} disabled={refreshing}><Text style={styles.retryText}>{refreshing ? "재시도 중…" : "다시 시도"}</Text></Pressable></View>}{tab === "status" && <><Text style={styles.title}>환자 상태</Text>{status ? <View style={styles.card}><Text style={styles.muted}>{status.patient.room_label}</Text><Text style={styles.patient}>{status.patient.display_name} 님</Text><View style={[styles.badge, badgeStyle(status.display_state)]}><Text style={styles.badgeText}>{stateLabels[status.display_state]}</Text></View><Text style={styles.message}>{status.event ? progressLabels[status.event.progress] : "현재 보호자에게 안내할 특이사항이 없습니다."}</Text><InfoRow label="병실 센서" value={status.sensor_online ? "정상" : "연결 확인 필요"} /><InfoRow label="센서 상태 갱신" value={safeDate(status.updated_at)} /><InfoRow label="서버 동기화" value={lastSyncedAt ? safeDate(lastSyncedAt.toISOString()) : "확인 중"} /></View> : <EmptyState loading={refreshing} onRetry={refresh} />}{status?.event && <View style={styles.card}><Text style={styles.heading}>사건 진행 이력</Text><Timeline progress={status.event.progress} /><Text style={styles.muted}>시작 {safeDate(status.event.created_at, true)}</Text>{status.event.completed_at && <Text style={styles.muted}>완료 {safeDate(status.event.completed_at, true)}</Text>}</View>}</>}{tab === "history" && <><Text style={styles.title}>최근 사건 이력</Text>{history.length ? history.map(item => <View style={styles.card} key={item.id}><Text style={styles.heading}>병동 상태 확인</Text><Text style={styles.muted}>{safeDate(item.created_at, true)}</Text><Text style={styles.progress}>{progressLabels[item.progress]}</Text>{item.completed_at && <Text style={styles.muted}>완료 {safeDate(item.completed_at, true)}</Text>}</View>) : <View style={styles.card}><Text style={styles.muted}>{refreshing ? "이력을 불러오는 중…" : "최근 사건 이력이 없습니다."}</Text></View>}</>}{tab === "settings" && <><Text style={styles.title}>설정</Text><View style={styles.card}><InfoRow label="연결 상태" value={connection === "online" ? "온라인 · 자동 갱신" : "복구 재시도 중"} /><InfoRow label="마지막 서버 동기화" value={lastSyncedAt ? safeDate(lastSyncedAt.toISOString(), true) : "확인 전"} /><InfoRow label="서버" value={new URL(baseUrl).host} /><Pressable style={styles.outlineButton} onPress={() => void signOut()}><Text style={styles.outlineText}>환자 연결 해제</Text></Pressable></View></>}{!!error && connection === "online" && <Text style={styles.error} accessibilityRole="alert">{error}</Text>}</ScrollView><View style={styles.nav}><Nav label="현재 상태" active={tab === "status"} onPress={() => setTab("status")} /><Nav label="사건 이력" active={tab === "history"} onPress={() => setTab("history")} /><Nav label="설정" active={tab === "settings"} onPress={() => setTab("settings")} /></View></SafeAreaView>;
 }
 
+function EmptyState({ loading, onRetry }: { loading: boolean; onRetry: () => void }) { return <View style={styles.card}>{loading ? <ActivityIndicator color="#3157d5" /> : <><Text style={styles.muted}>상태 정보를 불러오지 못했습니다.</Text><Pressable onPress={() => void onRetry()}><Text style={styles.retryText}>다시 시도</Text></Pressable></>}</View>; }
+function Timeline({ progress }: { progress: EventProgress }) { const steps: EventProgress[] = progress === "FALSE_ALARM" ? ["OPEN", "ACKNOWLEDGED", "FALSE_ALARM"] : ["OPEN", "ACKNOWLEDGED", "RESPONDING", "COMPLETED"]; const current = Math.max(0, steps.indexOf(progress)); return <View style={styles.timeline}>{steps.map((step, index) => <View style={styles.timelineRow} key={step}><View style={[styles.dot, index <= current && styles.dotActive]} /><Text style={[styles.timelineText, index <= current && styles.timelineTextActive]}>{progressLabels[step]}</Text></View>)}</View>; }
 function InfoRow({ label, value }: { label: string; value: string }) { return <View style={styles.row}><Text style={styles.muted}>{label}</Text><Text style={styles.value}>{value}</Text></View>; }
 function Nav({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) { return <Pressable style={styles.navItem} onPress={onPress}><Text style={[styles.navText, active && styles.navActive]}>{label}</Text></Pressable>; }
-function badgeStyle(state: string) { if (state === "WARD_NOTIFIED") return { backgroundColor: "#fff0d4" }; if (state === "STAFF_CHECKING") return { backgroundColor: "#e5ebff" }; if (state === "AWAY") return { backgroundColor: "#e9edf3" }; return { backgroundColor: "#dcf5e9" }; }
-
-const styles = StyleSheet.create({ page:{flex:1,backgroundColor:"#f2f5fa"},center:{flex:1,alignItems:"center",justifyContent:"center"},content:{padding:22,paddingBottom:110},login:{padding:24,justifyContent:"center",flexGrow:1},brand:{fontSize:14,fontWeight:"800",color:"#3157d5",letterSpacing:1.3},title:{fontSize:28,fontWeight:"800",color:"#17213a",marginTop:7,marginBottom:22},card:{backgroundColor:"white",padding:22,borderRadius:22,marginBottom:15,shadowColor:"#17213a",shadowOpacity:.07,shadowRadius:18,elevation:2},heading:{fontSize:19,fontWeight:"700",color:"#17213a",marginBottom:8},patient:{fontSize:26,fontWeight:"800",marginTop:5,marginBottom:14},muted:{color:"#68758c",lineHeight:21},label:{fontWeight:"700",marginTop:17,marginBottom:7},input:{borderWidth:1,borderColor:"#cbd3e0",borderRadius:12,padding:14,fontSize:16,backgroundColor:"#fff"},button:{backgroundColor:"#3157d5",borderRadius:13,padding:15,alignItems:"center",marginTop:18},buttonText:{color:"white",fontWeight:"800",fontSize:16},error:{color:"#c53b3b",marginVertical:10},badge:{alignSelf:"flex-start",paddingHorizontal:12,paddingVertical:8,borderRadius:30},badgeText:{fontWeight:"800",color:"#25425f"},message:{fontSize:19,lineHeight:30,marginVertical:22,color:"#26324a"},messageSmall:{fontSize:17,lineHeight:27,color:"#26324a"},row:{flexDirection:"row",justifyContent:"space-between",gap:20,borderTopWidth:1,borderTopColor:"#edf0f5",paddingVertical:14},value:{fontWeight:"700",color:"#26324a",flexShrink:1,textAlign:"right"},progress:{marginTop:12,color:"#3157d5",fontWeight:"700"},outlineButton:{borderWidth:1,borderColor:"#3157d5",borderRadius:12,padding:14,alignItems:"center",marginTop:18},outlineText:{color:"#3157d5",fontWeight:"800"},nav:{position:"absolute",bottom:0,left:0,right:0,height:78,backgroundColor:"white",flexDirection:"row",borderTopWidth:1,borderTopColor:"#e6eaf0",paddingBottom:10},navItem:{flex:1,alignItems:"center",justifyContent:"center"},navText:{color:"#8390a5",fontWeight:"700"},navActive:{color:"#3157d5"} });
+function badgeStyle(state: DisplayState) { if (state === "WARD_NOTIFIED") return { backgroundColor: "#fff0d4" }; if (state === "STAFF_CHECKING") return { backgroundColor: "#e5ebff" }; if (state === "AWAY") return { backgroundColor: "#e9edf3" }; return { backgroundColor: "#dcf5e9" }; }
+const styles = StyleSheet.create({ page:{flex:1,backgroundColor:"#f2f5fa"},center:{flex:1,alignItems:"center",justifyContent:"center"},loadingText:{marginTop:14,color:"#68758c"},content:{padding:22,paddingBottom:110},login:{padding:24,justifyContent:"center",flexGrow:1},brand:{fontSize:14,fontWeight:"800",color:"#3157d5",letterSpacing:1.3},title:{fontSize:28,fontWeight:"800",color:"#17213a",marginTop:7,marginBottom:22},card:{backgroundColor:"white",padding:22,borderRadius:22,marginBottom:15,shadowColor:"#17213a",shadowOpacity:.07,shadowRadius:18,elevation:2},heading:{fontSize:19,fontWeight:"700",color:"#17213a",marginBottom:8},patient:{fontSize:26,fontWeight:"800",marginTop:5,marginBottom:14},muted:{color:"#68758c",lineHeight:21},label:{fontWeight:"700",marginTop:17,marginBottom:7},input:{borderWidth:1,borderColor:"#cbd3e0",borderRadius:12,padding:14,fontSize:16,backgroundColor:"#fff"},button:{backgroundColor:"#3157d5",borderRadius:13,padding:15,alignItems:"center",marginTop:18},buttonText:{color:"white",fontWeight:"800",fontSize:16},error:{color:"#a62828",marginVertical:10},badge:{alignSelf:"flex-start",paddingHorizontal:12,paddingVertical:8,borderRadius:30},badgeText:{fontWeight:"800",color:"#25425f"},message:{fontSize:18,lineHeight:28,marginVertical:22,color:"#26324a"},row:{flexDirection:"row",justifyContent:"space-between",gap:20,borderTopWidth:1,borderTopColor:"#edf0f5",paddingVertical:14},value:{fontWeight:"700",color:"#26324a",flexShrink:1,textAlign:"right"},progress:{marginTop:12,color:"#3157d5",fontWeight:"700",lineHeight:22},outlineButton:{borderWidth:1,borderColor:"#3157d5",borderRadius:12,padding:14,alignItems:"center",marginTop:18},outlineText:{color:"#3157d5",fontWeight:"800"},connectionBanner:{backgroundColor:"#fff4d9",borderColor:"#e6ba58",borderWidth:1,borderRadius:14,padding:14,marginTop:14,marginBottom:8},connectionTitle:{fontWeight:"800",color:"#654500"},connectionText:{color:"#654500",marginTop:4},retryText:{color:"#3157d5",fontWeight:"800",marginTop:12},timeline:{marginVertical:12},timelineRow:{flexDirection:"row",alignItems:"center",marginVertical:7},dot:{width:12,height:12,borderRadius:6,backgroundColor:"#cbd3e0",marginRight:10},dotActive:{backgroundColor:"#3157d5"},timelineText:{color:"#8390a5",flex:1},timelineTextActive:{color:"#26324a",fontWeight:"700"},nav:{position:"absolute",bottom:0,left:0,right:0,height:78,backgroundColor:"white",flexDirection:"row",borderTopWidth:1,borderTopColor:"#e6eaf0",paddingBottom:10},navItem:{flex:1,alignItems:"center",justifyContent:"center"},navText:{color:"#8390a5",fontWeight:"700"},navActive:{color:"#3157d5"} });

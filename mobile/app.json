@@ -3,7 +3,7 @@
     "name": "보호자 안심 알림",
     "slug": "care-signal",
     "owner": "hodoru0221s-team",
-    "version": "0.1.0",
+    "version": "0.2.2",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "plugins": [

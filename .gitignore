@@ -2,8 +2,10 @@ __pycache__/
 *.py[cod]
 .env
 .venv/
+.pnpm-store/
 mobile/node_modules/
 mobile/.expo/
+artifacts/*.apk
 # The public API URL is safe to commit. Do not place secrets in mobile/.env.
 pending_uploads.jsonl
 inference.jsonl
