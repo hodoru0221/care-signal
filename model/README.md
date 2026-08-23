@@ -20,6 +20,18 @@ python -m model.train_compare --data synthetic --epochs 10 --seeds 42 --output-d
 
 Synthetic scores validate code paths only. They do not measure real CSI performance.
 
+Create reusable synthetic windows and render a signal dashboard:
+
+```powershell
+python -m model.generate_synthetic_demo --output model/outputs/demo/csi_windows.npz
+python -m model.visualize_csi `
+  --input model/outputs/demo/csi_windows.npz `
+  --checkpoint model/outputs/synthetic/checkpoints/cnn_seed_42.pt `
+  --output model/outputs/demo/csi_visualization.png
+```
+
+The visualization contains a time/subcarrier amplitude heatmap, mean amplitude trace and model probability bars. The same command accepts real `.npz` or MATLAB `-v7` `.mat` windows later.
+
 ## Convert model predictions to gateway input
 
 The input `.npz` or MATLAB `-v7` `.mat` file must contain CSI amplitude windows named `X`. Its default shape is `[N, T, S]`.
@@ -45,3 +57,14 @@ python -m gateway.uploader `
 ```
 
 Raw serial capture and live visualization are intentionally outside this connection step. A future collector only needs to produce the same `[N, T, S]` amplitude windows.
+
+## Hardware-free validation completed
+
+The following path can be verified before an ESP32 is available:
+
+1. Run `python -m model.smoke_test` to check all three networks, attention weights, backpropagation and group isolation.
+2. Train the three candidates with `python -m model.train_compare ...` and choose a checkpoint by validation Macro-F1.
+3. Generate or load CSI windows, then run `model.infer_to_gateway` to produce normalized observations.
+4. Run `gateway.uploader` and confirm the room state and generated event in the staff dashboard.
+
+Local integration verification on 2026-08-24 used 160 synthetic windows and four CPU epochs. All three models trained, an independent 80-window set was inferred, the uploader delivered an observation to a local FastAPI server, and the staff API reported the matching room state and active event. These values prove the software path only; do not report the synthetic accuracy as sensor performance.
