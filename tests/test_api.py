@@ -41,8 +41,11 @@ class ApiTests(unittest.TestCase):
     def test_public_pages_do_not_embed_demo_credentials(self):
         dashboard = self.client.get("/").text
         guardian = self.client.get("/guardian").text
+        simulator = self.client.get("/simulator").text
         self.assertNotIn('value="NURSE-101"', dashboard)
         self.assertNotIn("시연 코드: CARE-101", guardian)
+        self.assertIn("테스트 데이터 전송기", simulator)
+        self.assertNotIn('value="NURSE-101"', simulator)
 
     def test_staff_and_guardian_authentication_boundaries(self):
         self.assertEqual(self.client.get("/api/v1/ward/map").status_code, 401)

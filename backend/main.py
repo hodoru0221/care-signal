@@ -240,6 +240,11 @@ def guardian_app():
     return FileResponse(WEB_DIR / "guardian.html")
 
 
+@app.get("/simulator")
+def simulator_app():
+    return FileResponse(WEB_DIR / "simulator.html")
+
+
 @app.get("/manifest.webmanifest")
 def manifest():
     return FileResponse(WEB_DIR / "manifest.webmanifest", media_type="application/manifest+json")
