@@ -2,6 +2,8 @@
 
 The hospital-side model and gateway exchange newline-delimited JSON. The normalized observation contract is:
 
+The received CSI comparison project is integrated under `model/`. See `model/README.md` for training a checkpoint and converting `.npz`/`.mat` CSI windows directly into the gateway's `inference.jsonl` contract.
+
 | Field | Requirement |
 | --- | --- |
 | `observation_id` | Unique string. The bridge/gateway derives a deterministic SHA-256-based ID when absent. |
