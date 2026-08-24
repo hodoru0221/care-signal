@@ -1,5 +1,6 @@
 import os
 import secrets
+import logging
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from math import isfinite
@@ -11,6 +12,7 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
+from psycopg import OperationalError
 
 from backend.domain import MonitoringStore, SensorObservation, now_iso
 from backend.persistence import (
@@ -23,6 +25,7 @@ from backend.ward import WARD_ROOM_IDS, ward_map_payload
 
 
 app = FastAPI(title="WiFi Sensing Ward Monitor", version="0.2.0")
+logger = logging.getLogger(__name__)
 NEON_DATABASE_URL = os.getenv("NEON_DATABASE_URL", "")
 LEGACY_DATABASE_URL = os.getenv("DATABASE_URL", "")
 DATABASE_URL = NEON_DATABASE_URL or LEGACY_DATABASE_URL
@@ -30,7 +33,10 @@ if DATABASE_URL:
     postgres_repository = PostgresSnapshotRepository(DATABASE_URL)
     if NEON_DATABASE_URL and LEGACY_DATABASE_URL and NEON_DATABASE_URL != LEGACY_DATABASE_URL:
         legacy_repository = PostgresSnapshotRepository(LEGACY_DATABASE_URL)
-        migrate_repository_if_empty(postgres_repository, legacy_repository)
+        try:
+            migrate_repository_if_empty(postgres_repository, legacy_repository)
+        except OperationalError as error:
+            logger.warning("Legacy database migration skipped: %s", error)
     store = PersistentMonitoringStore(postgres_repository)
     push_tokens_memory = None
     STORAGE_MODE = "neon-postgres" if NEON_DATABASE_URL else "render-postgres"
