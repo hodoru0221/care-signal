@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Care Signal 테스트 전송기</title>
+  <style>
+    :root{font-family:Inter,Pretendard,"Noto Sans KR",system-ui,sans-serif;color:#17233a;background:#edf3f8;--primary:#2457d6;--line:#d8e1eb;--muted:#627087;--safe:#087a54;--warn:#a35b00;--danger:#b42335}*{box-sizing:border-box}body{margin:0;padding:24px}.shell{max-width:920px;margin:auto}header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}h1,h2,p{margin-top:0}h1{margin-bottom:6px;font-size:clamp(26px,5vw,38px)}.subtle{color:var(--muted)}.card{background:#fff;border:1px solid var(--line);border-radius:20px;padding:22px;box-shadow:0 10px 32px #20304d0d;margin-bottom:16px}.login{max-width:460px;margin:48px auto}.field{display:grid;gap:8px}.field label{font-weight:800}.field input,.field select{width:100%;border:1px solid #aebac9;border-radius:12px;padding:13px;font:inherit}.toolbar{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:end}.state-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.state{min-height:108px;border:2px solid var(--line);border-radius:16px;background:#fff;text-align:left;padding:17px;cursor:pointer;font:inherit;transition:.15s}.state:hover{transform:translateY(-2px);box-shadow:0 8px 22px #1d293918}.state:focus-visible,.primary:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #2457d655;outline-offset:3px}.state strong{display:block;font-size:19px;margin-bottom:7px}.state span{color:var(--muted);font-size:14px}.state.safe{border-color:#63b99a;background:#effaf6}.state.warning{border-color:#e1a04e;background:#fff8e8}.state.danger{border-color:#dd6a77;background:#fff1f2}.primary,.secondary{border:0;border-radius:11px;padding:12px 16px;font:inherit;font-weight:800;cursor:pointer}.primary{background:var(--primary);color:#fff}.secondary{background:#e9eef7;color:#31415a}.links{display:flex;gap:8px;flex-wrap:wrap}.links a{text-decoration:none}.result{min-height:86px;border-radius:14px;background:#f6f8fb;border:1px solid var(--line);padding:16px}.result.success{background:#effaf6;border-color:#83c9af}.result.error{background:#fff1f2;border-color:#e59aa3}.result strong{display:block;margin-bottom:6px}.recent{display:grid;gap:8px;margin-top:12px}.recent div{display:flex;justify-content:space-between;gap:12px;padding:10px 12px;background:#f7f9fc;border-radius:10px;font-size:14px}.hidden{display:none!important}.error-text{color:var(--danger);min-height:22px;margin:10px 0 0}button:disabled{opacity:.55;cursor:wait}@media(max-width:620px){body{padding:14px}.card{padding:17px}.toolbar{grid-template-columns:1fr}.state-grid{grid-template-columns:1fr}.state{min-height:90px}header{display:block}.links{margin-top:12px}}
+  </style>
+</head>
+<body><main class="shell">
+  <header><div><div class="subtle">CARE SIGNAL · DEMO TOOL</div><h1>테스트 데이터 전송기</h1><p class="subtle">실제 센서 대신 선택한 병실 상태를 서버로 전송합니다.</p></div><nav class="links"><a class="secondary" href="/" target="_blank">직원 화면</a><a class="secondary" href="/guardian" target="_blank">보호자 화면</a></nav></header>
+
+  <section id="loginCard" class="card login">
+    <h2>직원 인증</h2><p class="subtle">테스트 데이터 전송 권한을 확인합니다.</p>
+    <div class="field"><label for="staffCode">직원 코드</label><input id="staffCode" type="password" autocomplete="current-password" placeholder="직원 코드 입력"></div>
+    <button id="loginButton" class="primary" style="width:100%;margin-top:14px">시작하기</button><p id="loginError" class="error-text" role="alert"></p>
+  </section>
+
+  <section id="console" class="hidden">
+    <article class="card"><div class="toolbar"><div class="field"><label for="roomSelect">전송할 병실</label><select id="roomSelect"><option value="room-01">101호</option><option value="room-02">102호</option><option value="room-03">103호</option><option value="room-04">104호</option><option value="room-05">105호</option><option value="room-06">106호</option></select></div><button id="logoutButton" class="secondary">로그아웃</button></div></article>
+    <article class="card"><h2>보낼 상태 선택</h2><p class="subtle">버튼을 누르는 즉시 신뢰도 95%의 테스트 판정이 전송됩니다.</p><div class="state-grid">
+      <button class="state safe" data-state="EMPTY"><strong>빈 침대</strong><span>환자가 감지 구역에 없음</span></button>
+      <button class="state safe" data-state="IN_BED"><strong>침상 재실</strong><span>환자가 침대에 안정적으로 있음</span></button>
+      <button class="state warning" data-state="OUT_OF_BED"><strong>침대 이탈</strong><span>주의 알림과 사건 생성</span></button>
+      <button class="state danger" data-state="MOVEMENT_ANOMALY"><strong>이상 움직임</strong><span>긴급 알림과 사건 생성</span></button>
+    </div></article>
+    <article class="card"><h2>전송 결과</h2><div id="result" class="result" role="status" aria-live="polite"><strong>대기 중</strong><span class="subtle">병실과 상태를 선택해 주세요.</span></div><div id="recent" class="recent"></div></article>
+  </section>
+  <script>
+    const labels={EMPTY:'빈 침대',IN_BED:'침상 재실',OUT_OF_BED:'침대 이탈',MOVEMENT_ANOMALY:'이상 움직임'};
+    const roomLabels={'room-01':'101호','room-02':'102호','room-03':'103호','room-04':'104호','room-05':'105호','room-06':'106호'};
+    const $=selector=>document.querySelector(selector),token=()=>sessionStorage.getItem('simulatorStaffToken')||'',headers=()=>({'Content-Type':'application/json',Authorization:`Bearer ${token()}`});
+    let history=[];
+    async function login(){const button=$('#loginButton');button.disabled=true;$('#loginError').textContent='';try{const response=await fetch('/api/v1/staff/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({access_code:$('#staffCode').value})});if(!response.ok)throw new Error('직원 코드를 확인해 주세요.');const data=await response.json();if(!data.demo_mode)throw new Error('서버의 시연 모드가 꺼져 있습니다.');sessionStorage.setItem('simulatorStaffToken',data.access_token);showConsole()}catch(error){$('#loginError').textContent=error.message}finally{button.disabled=false}}
+    function showConsole(){$('#loginCard').classList.add('hidden');$('#console').classList.remove('hidden')}
+    async function logout(){const value=token();sessionStorage.removeItem('simulatorStaffToken');if(value)try{await fetch('/api/v1/staff/logout',{method:'POST',headers:{Authorization:`Bearer ${value}`}})}catch{}location.reload()}
+    function renderHistory(){const recent=$('#recent');recent.innerHTML=history.map(item=>`<div><span>${item.room} · <b>${item.state}</b></span><time>${item.time}</time></div>`).join('')}
+    async function sendState(state,button){const roomId=$('#roomSelect').value,result=$('#result');document.querySelectorAll('[data-state]').forEach(item=>item.disabled=true);result.className='result';result.innerHTML='<strong>전송 중…</strong><span class="subtle">서버 응답을 기다리고 있습니다.</span>';try{const response=await fetch('/api/v1/demo/state',{method:'POST',headers:headers(),body:JSON.stringify({room_id:roomId,state,confidence:.95})});if(response.status===401){sessionStorage.removeItem('simulatorStaffToken');throw new Error('로그인 시간이 끝났습니다. 새로고침 후 다시 로그인해 주세요.')}if(!response.ok){const data=await response.json().catch(()=>({}));throw new Error(data.detail||'전송하지 못했습니다.')}const now=new Date().toLocaleTimeString('ko-KR');result.className='result success';result.innerHTML=`<strong>전송 완료</strong><span>${roomLabels[roomId]}에 ${labels[state]} 상태를 보냈습니다. · 신뢰도 95%</span>`;history.unshift({room:roomLabels[roomId],state:labels[state],time:now});history=history.slice(0,5);renderHistory()}catch(error){result.className='result error';result.innerHTML=`<strong>전송 실패</strong><span>${error.message}</span>`}finally{document.querySelectorAll('[data-state]').forEach(item=>item.disabled=false)}}
+    $('#loginButton').addEventListener('click',login);$('#staffCode').addEventListener('keydown',event=>{if(event.key==='Enter')login()});$('#logoutButton').addEventListener('click',logout);document.querySelectorAll('[data-state]').forEach(button=>button.addEventListener('click',()=>sendState(button.dataset.state,button)));if(token())showConsole();
+  </script>
+</main></body>
+</html>

@@ -2,6 +2,10 @@
 
 The hospital-side model and gateway exchange newline-delimited JSON. The normalized observation contract is:
 
+The received CSI comparison project is integrated under `model/`. See `model/README.md` for training a checkpoint and converting `.npz`/`.mat` CSI windows directly into the gateway's `inference.jsonl` contract.
+
+Hardware-free development may use `model.generate_synthetic_demo` and `model.visualize_csi`. The generated PNG shows the time/subcarrier amplitude heatmap, mean amplitude trace and checkpoint probabilities. When hardware becomes available, replace only the synthetic `.npz` producer with the serial collector while preserving the `[N, T, S]` window contract.
+
 | Field | Requirement |
 | --- | --- |
 | `observation_id` | Unique string. The bridge/gateway derives a deterministic SHA-256-based ID when absent. |
